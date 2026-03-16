@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Access Log - Gatekeeper Admin</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f5f5; color: #333; }
+        .nav { background: #2c3e50; color: white; padding: 1rem 2rem; display: flex; justify-content: space-between; align-items: center; }
+        .nav a { color: #ecf0f1; text-decoration: none; margin-left: 1.5rem; }
+        .nav a:hover { color: white; }
+        .content { max-width: 1200px; margin: 2rem auto; padding: 0 1rem; }
+        h2 { margin-bottom: 1rem; }
+        .filters { background: white; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); display: flex; gap: 0.5rem; align-items: end; flex-wrap: wrap; }
+        .filters .field { display: flex; flex-direction: column; }
+        .filters label { font-size: 0.8rem; margin-bottom: 0.2rem; }
+        .filters input, .filters select { padding: 0.4rem; border: 1px solid #ddd; border-radius: 4px; }
+        table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); font-size: 0.9rem; }
+        th, td { padding: 0.5rem 0.75rem; text-align: left; border-bottom: 1px solid #eee; }
+        th { background: #f8f9fa; font-weight: 600; }
+        .status-allowed { color: #27ae60; }
+        .status-blocked { color: #e74c3c; }
+        .status-rate_limited { color: #e67e22; }
+        .status-paywall { color: #8e44ad; }
+        .status-auth_required { color: #2980b9; }
+        button { padding: 0.4rem 0.8rem; border-radius: 4px; border: none; background: #4a90d9; color: white; cursor: pointer; font-size: 0.85rem; }
+        .pagination { margin-top: 1rem; text-align: center; }
+        .pagination a { margin: 0 0.5rem; color: #4a90d9; text-decoration: none; }
+        .block-btn { background: #e74c3c; color: white; border: none; padding: 0.2rem 0.5rem; border-radius: 3px; cursor: pointer; font-size: 0.8rem; }
+    </style>
+</head>
+<body>
+    <div class="nav">
+        <strong>Gatekeeper Admin</strong>
+        <div>
+            <a href="/_auth/admin">Dashboard</a>
+            <a href="/_auth/admin/users">Users</a>
+            <a href="/_auth/admin/ip-blocklist">IP Blocklist</a>
+            <a href="/_auth/admin/access-log">Access Log</a>
+            <span style="margin-left:1.5rem; opacity:0.7;">{{ admin_email }}</span>
+        </div>
+    </div>
+    <div class="content">
+        <h2>Access Log</h2>
+
+        <form method="GET" action="/_auth/admin/access-log" class="filters">
+            <div class="field">
+                <label>IP Address</label>
+                <input type="text" name="ip" value="{{ filter_ip }}" placeholder="Filter by IP">
+            </div>
+            <div class="field">
+                <label>App</label>
+                <select name="app_slug">
+                    <option value="">All apps</option>
+                    {% for slug in apps %}
+                    <option value="{{ slug }}" {% if filter_app == slug %}selected{% endif %}>{{ slug }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="field">
+                <label>Status</label>
+                <select name="status">
+                    <option value="">All</option>
+                    <option value="allowed" {% if filter_status == 'allowed' %}selected{% endif %}>Allowed</option>
+                    <option value="blocked" {% if filter_status == 'blocked' %}selected{% endif %}>Blocked</option>
+                    <option value="rate_limited" {% if filter_status == 'rate_limited' %}selected{% endif %}>Rate Limited</option>
+                    <option value="paywall" {% if filter_status == 'paywall' %}selected{% endif %}>Paywall</option>
+                    <option value="auth_required" {% if filter_status == 'auth_required' %}selected{% endif %}>Auth Required</option>
+                </select>
+            </div>
+            <button type="submit">Filter</button>
+        </form>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Time</th>
+                    <th>IP</th>
+                    <th>App</th>
+                    <th>Method</th>
+                    <th>Path</th>
+                    <th>User</th>
+                    <th>Status</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for log in logs %}
+                <tr>
+                    <td>{{ log.timestamp.strftime('%m-%d %H:%M:%S') }}</td>
+                    <td>{{ log.ip_address }}</td>
+                    <td>{{ log.app_slug }}</td>
+                    <td>{{ log.method }}</td>
+                    <td>{{ log.path[:60] }}</td>
+                    <td>{{ log.user_email or '-' }}</td>
+                    <td class="status-{{ log.status }}">{{ log.status }}</td>
+                    <td>
+                        <form method="POST" action="/_auth/admin/ip-blocklist/add" style="display:inline;">
+                            <input type="hidden" name="ip_address" value="{{ log.ip_address }}">
+                            <input type="hidden" name="reason" value="Blocked from access log">
+                            <button type="submit" class="block-btn">Block</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <div class="pagination">
+            {% if page > 1 %}
+            <a href="?ip={{ filter_ip }}&app_slug={{ filter_app }}&status={{ filter_status }}&page={{ page - 1 }}">&larr; Previous</a>
+            {% endif %}
+            <span>Page {{ page }}</span>
+            {% if logs|length == 100 %}
+            <a href="?ip={{ filter_ip }}&app_slug={{ filter_app }}&status={{ filter_status }}&page={{ page + 1 }}">Next &rarr;</a>
+            {% endif %}
+        </div>
+    </div>
+</body>
+</html>

@@ -1,0 +1,61 @@
+# Gatekeeper configuration
+# Copy to config.yaml and fill in your values
+
+server:
+  host: "127.0.0.1"
+  port: 9100
+  # Secret key for signing session cookies - generate with: python -c "import secrets; print(secrets.token_hex(32))"
+  secret_key: "CHANGE_ME"
+
+database:
+  # SQLite database path (relative to working directory)
+  path: "gatekeeper.db"
+
+oauth:
+  google:
+    client_id: ""
+    client_secret: ""
+
+# Each app that gatekeeper protects
+apps:
+  myapp-prod:
+    # Display name
+    name: "My App (Production)"
+    # Domains this app is served on (used to identify which app a request is for)
+    domains:
+      - "myapp.example.com"
+    # Paths that require authentication (all others allow anonymous)
+    # Use "/*" to require auth for everything
+    protected_paths:
+      - "/admin/*"
+      - "/api/protected/*"
+    # Soft paywall settings (omit to disable)
+    paywall:
+      # Max new anonymous sessions per IP per week
+      max_sessions_per_week: 10
+      # For API-only: max calls per IP per hour (0 = use session-based tracking)
+      max_api_calls_per_hour: 0
+    # Available roles for this app
+    roles:
+      - "user"
+      - "admin"
+    # Default role assigned on registration ("user" or "guest")
+    default_role: "user"
+
+  myapp-staging:
+    name: "My App (Staging)"
+    domains:
+      - "staging.myapp.example.com"
+    protected_paths:
+      - "/*"
+    roles:
+      - "user"
+      - "admin"
+      - "guest"
+    default_role: "guest"
+
+rate_limit:
+  # Global rate limit: max requests per IP per minute
+  requests_per_minute: 120
+  # Burst allowance
+  burst: 30

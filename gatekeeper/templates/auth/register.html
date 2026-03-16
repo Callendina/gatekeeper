@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Register - {{ app_name }}{% endblock %}
+{% block body %}
+<div class="container">
+    <h1>Create Account</h1>
+    <h2>{{ app_name }}</h2>
+
+    {% if error %}
+    <div class="error">{{ error }}</div>
+    {% endif %}
+
+    <form method="POST" action="/_auth/register">
+        <input type="hidden" name="app" value="{{ app }}">
+        <div class="form-group">
+            <label for="display_name">Display Name</label>
+            <input type="text" id="display_name" name="display_name">
+        </div>
+        <div class="form-group">
+            <label for="email">Email</label>
+            <input type="email" id="email" name="email" required>
+        </div>
+        <div class="form-group">
+            <label for="password">Password</label>
+            <input type="password" id="password" name="password" required minlength="8">
+        </div>
+        <button type="submit" class="btn btn-primary">Register</button>
+    </form>
+
+    {% if has_google %}
+    <div class="divider">or</div>
+    <a href="/_auth/oauth/google?app={{ app }}" class="btn btn-google">Sign up with Google</a>
+    {% endif %}
+
+    <div class="link">
+        Already have an account? <a href="/_auth/login?app={{ app }}">Sign In</a>
+    </div>
+</div>
+{% endblock %}

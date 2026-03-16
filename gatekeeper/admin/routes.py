@@ -1,0 +1,189 @@
+"""Admin routes for managing users, IP blocklist, and viewing access logs."""
+from fastapi import APIRouter, Request, Depends, Form
+from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.templating import Jinja2Templates
+from sqlalchemy import select, func, desc, delete
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from gatekeeper.database import get_db
+from gatekeeper.config import GatekeeperConfig
+from gatekeeper.models import User, UserAppRole, IPBlocklist, AccessLog
+from gatekeeper.middleware.ip_block import block_ip, unblock_ip
+
+from pathlib import Path
+
+router = APIRouter(prefix="/_auth/admin")
+_config: GatekeeperConfig = None
+templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
+
+
+def init_admin_routes(config: GatekeeperConfig):
+    global _config
+    _config = config
+
+
+async def _require_admin(request: Request):
+    """Check that the request is from a system admin."""
+    user_email = request.headers.get("x-gatekeeper-user", "")
+    is_admin = request.headers.get("x-gatekeeper-system-admin", "") == "true"
+    if not user_email or not is_admin:
+        return None
+    return user_email
+
+
+@router.get("")
+async def admin_dashboard(request: Request, db: AsyncSession = Depends(get_db)):
+    admin = await _require_admin(request)
+    if not admin:
+        return HTMLResponse("Access denied", status_code=403)
+
+    user_count = await db.scalar(select(func.count(User.id)))
+    blocked_count = await db.scalar(select(func.count(IPBlocklist.id)))
+
+    return templates.TemplateResponse("admin/dashboard.html", {
+        "request": request,
+        "user_count": user_count,
+        "blocked_count": blocked_count,
+        "apps": _config.apps,
+        "admin_email": admin,
+    })
+
+
+@router.get("/users")
+async def list_users(request: Request, db: AsyncSession = Depends(get_db)):
+    admin = await _require_admin(request)
+    if not admin:
+        return HTMLResponse("Access denied", status_code=403)
+
+    stmt = select(User).order_by(User.created_at.desc())
+    result = await db.execute(stmt)
+    users = result.scalars().all()
+
+    # Get roles for each user
+    user_roles = {}
+    for user in users:
+        role_stmt = select(UserAppRole).where(UserAppRole.user_id == user.id)
+        role_result = await db.execute(role_stmt)
+        user_roles[user.id] = role_result.scalars().all()
+
+    return templates.TemplateResponse("admin/users.html", {
+        "request": request,
+        "users": users,
+        "user_roles": user_roles,
+        "apps": _config.apps,
+        "admin_email": admin,
+    })
+
+
+@router.post("/users/{user_id}/role")
+async def update_user_role(
+    user_id: int,
+    request: Request,
+    app_slug: str = Form(...),
+    role: str = Form(...),
+    db: AsyncSession = Depends(get_db),
+):
+    admin = await _require_admin(request)
+    if not admin:
+        return HTMLResponse("Access denied", status_code=403)
+
+    stmt = select(UserAppRole).where(
+        UserAppRole.user_id == user_id,
+        UserAppRole.app_slug == app_slug,
+    )
+    result = await db.execute(stmt)
+    app_role = result.scalar_one_or_none()
+
+    if app_role:
+        app_role.role = role
+    else:
+        app_role = UserAppRole(user_id=user_id, app_slug=app_slug, role=role)
+        db.add(app_role)
+
+    await db.commit()
+    return RedirectResponse(url="/_auth/admin/users", status_code=302)
+
+
+@router.get("/ip-blocklist")
+async def ip_blocklist_page(request: Request, db: AsyncSession = Depends(get_db)):
+    admin = await _require_admin(request)
+    if not admin:
+        return HTMLResponse("Access denied", status_code=403)
+
+    stmt = select(IPBlocklist).order_by(IPBlocklist.blocked_at.desc())
+    result = await db.execute(stmt)
+    blocked = result.scalars().all()
+
+    return templates.TemplateResponse("admin/ip_blocklist.html", {
+        "request": request,
+        "blocked_ips": blocked,
+        "admin_email": admin,
+    })
+
+
+@router.post("/ip-blocklist/add")
+async def add_ip_block(
+    request: Request,
+    ip_address: str = Form(...),
+    reason: str = Form(""),
+    db: AsyncSession = Depends(get_db),
+):
+    admin = await _require_admin(request)
+    if not admin:
+        return HTMLResponse("Access denied", status_code=403)
+
+    await block_ip(db, ip_address, reason=reason, blocked_by=admin)
+    return RedirectResponse(url="/_auth/admin/ip-blocklist", status_code=302)
+
+
+@router.post("/ip-blocklist/remove")
+async def remove_ip_block(
+    request: Request,
+    ip_address: str = Form(...),
+    db: AsyncSession = Depends(get_db),
+):
+    admin = await _require_admin(request)
+    if not admin:
+        return HTMLResponse("Access denied", status_code=403)
+
+    await unblock_ip(db, ip_address)
+    return RedirectResponse(url="/_auth/admin/ip-blocklist", status_code=302)
+
+
+@router.get("/access-log")
+async def access_log_page(
+    request: Request,
+    ip: str = "",
+    app_slug: str = "",
+    status: str = "",
+    page: int = 1,
+    db: AsyncSession = Depends(get_db),
+):
+    admin = await _require_admin(request)
+    if not admin:
+        return HTMLResponse("Access denied", status_code=403)
+
+    per_page = 100
+    stmt = select(AccessLog).order_by(AccessLog.timestamp.desc())
+
+    if ip:
+        stmt = stmt.where(AccessLog.ip_address == ip)
+    if app_slug:
+        stmt = stmt.where(AccessLog.app_slug == app_slug)
+    if status:
+        stmt = stmt.where(AccessLog.status == status)
+
+    stmt = stmt.offset((page - 1) * per_page).limit(per_page)
+    result = await db.execute(stmt)
+    logs = result.scalars().all()
+
+    return templates.TemplateResponse("admin/access_log.html", {
+        "request": request,
+        "logs": logs,
+        "filter_ip": ip,
+        "filter_app": app_slug,
+        "filter_status": status,
+        "page": page,
+        "apps": _config.apps,
+        "admin_email": admin,
+    })

@@ -1,0 +1,60 @@
+# Example Caddyfile showing how to integrate gatekeeper with your apps.
+#
+# Gatekeeper runs on localhost:9100.
+# Each app runs on its own local port.
+#
+# The key directive is `forward_auth` which sends every request to gatekeeper
+# for checking before proxying to the app. Gatekeeper returns user info in
+# response headers which Caddy copies to the upstream request.
+
+# App 1: myapp.example.com -> localhost:8001
+myapp.example.com {
+	# All requests go through gatekeeper first
+	forward_auth localhost:9100 {
+		uri /_auth/verify
+		# Copy gatekeeper's response headers to the upstream request
+		copy_headers X-Gatekeeper-User X-Gatekeeper-Role X-Gatekeeper-System-Admin
+	}
+
+	# Auth UI routes are served directly by gatekeeper
+	handle /_auth/* {
+		reverse_proxy localhost:9100
+	}
+
+	# Everything else goes to the app
+	handle {
+		reverse_proxy localhost:8001
+	}
+}
+
+# App 2: api.example.com -> localhost:8002
+api.example.com {
+	forward_auth localhost:9100 {
+		uri /_auth/verify
+		copy_headers X-Gatekeeper-User X-Gatekeeper-Role X-Gatekeeper-System-Admin
+	}
+
+	handle /_auth/* {
+		reverse_proxy localhost:9100
+	}
+
+	handle {
+		reverse_proxy localhost:8002
+	}
+}
+
+# Staging variant: staging.myapp.example.com -> localhost:8003
+staging.myapp.example.com {
+	forward_auth localhost:9100 {
+		uri /_auth/verify
+		copy_headers X-Gatekeeper-User X-Gatekeeper-Role X-Gatekeeper-System-Admin
+	}
+
+	handle /_auth/* {
+		reverse_proxy localhost:9100
+	}
+
+	handle {
+		reverse_proxy localhost:8003
+	}
+}
