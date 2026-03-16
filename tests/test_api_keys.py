@@ -16,12 +16,18 @@ async def test_api_path_without_key_returns_401(client):
 
 
 @pytest.mark.asyncio
-async def test_temp_key_without_session_returns_401(client):
-    """Can't get a temp key without a session cookie."""
+async def test_temp_key_without_session_auto_creates_one(client):
+    """Requesting a temp key without a session auto-creates an anonymous session."""
     resp = await client.post("/_auth/api-key/temp", headers={
         "host": "api.example.com",
     })
-    assert resp.status_code == 401
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["type"] == "temp"
+    assert "api_key" in data
+    # Should also set a gk_session cookie
+    cookies = resp.headers.get_list("set-cookie")
+    assert any("gk_session" in c for c in cookies)
 
 
 @pytest.mark.asyncio

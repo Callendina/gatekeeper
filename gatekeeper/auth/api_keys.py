@@ -89,7 +89,7 @@ async def issue_registered_key(
 
     return JSONResponse({
         "api_key": key,
-        "expires_at": expires_at.isoformat(),
+        "expires_at": expires_at.isoformat() + "Z",
         "type": "registered",
     })
 
@@ -167,7 +167,7 @@ async def issue_temp_key(
         await db.commit()
         return _maybe_set_cookie(JSONResponse({
             "api_key": key,
-            "expires_at": expires_at.isoformat(),
+            "expires_at": expires_at.isoformat() + "Z",
             "type": "registered",
         }))
 
@@ -186,7 +186,7 @@ async def issue_temp_key(
 
     return _maybe_set_cookie(JSONResponse({
         "api_key": key,
-        "expires_at": expires_at.isoformat(),
+        "expires_at": expires_at.isoformat() + "Z",
         "type": "temp",
         "duration_minutes": app.api_access.temp_key_duration_minutes,
     }))
