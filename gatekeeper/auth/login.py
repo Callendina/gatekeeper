@@ -34,6 +34,19 @@ def _get_client_ip(request: Request) -> str:
 async def login_page(request: Request, app: str = "", next: str = "/"):
     app_config = _config.apps.get(app)
     app_name = app_config.name if app_config else "Application"
+
+    # If the app has a custom login HTML file, serve it with placeholders replaced
+    if app_config and app_config.login_html_file:
+        try:
+            with open(app_config.login_html_file) as f:
+                html = f.read()
+            html = html.replace("{{APP_NAME}}", app_name)
+            html = html.replace("{{GOOGLE_URL}}", f"/_auth/oauth/google?app={app}&next={next}")
+            html = html.replace("{{GITHUB_URL}}", f"/_auth/oauth/github?app={app}&next={next}")
+            return HTMLResponse(html)
+        except FileNotFoundError:
+            pass  # Fall through to default template
+
     return templates.TemplateResponse("auth/login.html", {
         "request": request,
         "app": app,

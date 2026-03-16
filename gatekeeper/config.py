@@ -54,6 +54,7 @@ class AppConfig:
     protected_paths: list[str] = field(default_factory=list)
     paywall: PaywallConfig = field(default_factory=PaywallConfig)
     api_access: APIAccessConfig = field(default_factory=APIAccessConfig)
+    login_html_file: str = ""
     roles: list[str] = field(default_factory=lambda: ["user", "admin"])
     default_role: str = "user"
 
@@ -123,6 +124,7 @@ def load_config(path: str = "config.yaml") -> GatekeeperConfig:
             paywall=paywall,
             api_access=api_access,
             roles=app_raw.get("roles", ["user", "admin"]),
+            login_html_file=app_raw.get("login_html_file", ""),
             default_role=app_raw.get("default_role", "user"),
         )
 
