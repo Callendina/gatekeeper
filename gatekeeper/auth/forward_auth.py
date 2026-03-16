@@ -121,9 +121,8 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
         await _log(db, ip, app.slug, path, method, None, "auth_required")
         login_url = f"/_auth/login?app={app.slug}&next={path}"
         return Response(
-            status_code=401,
-            headers={"X-Gatekeeper-Login-URL": login_url},
-            content="Authentication required",
+            status_code=302,
+            headers={"Location": login_url},
         )
 
     # 6. Check paywall for anonymous users
@@ -131,11 +130,10 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
         paywall_ok = await check_paywall(db, ip, app, session_token=session_token)
         if not paywall_ok:
             await _log(db, ip, app.slug, path, method, None, "paywall")
-            register_url = f"/_auth/register?app={app.slug}"
+            login_url = f"/_auth/login?app={app.slug}&next={path}"
             return Response(
-                status_code=403,
-                headers={"X-Gatekeeper-Register-URL": register_url},
-                content="Registration required",
+                status_code=302,
+                headers={"Location": login_url},
             )
 
     # 7. Create anonymous session if none exists (for tracking)
@@ -144,11 +142,10 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
         within_quota = await record_new_session(db, ip, app)
         if not within_quota:
             await _log(db, ip, app.slug, path, method, None, "paywall")
-            login_url = f"/_auth/login?app={app.slug}"
+            login_url = f"/_auth/login?app={app.slug}&next={path}"
             return Response(
-                status_code=403,
-                headers={"X-Gatekeeper-Register-URL": login_url},
-                content="Registration required",
+                status_code=302,
+                headers={"Location": login_url},
             )
 
         token = await create_session(db, None, app.slug, ip)

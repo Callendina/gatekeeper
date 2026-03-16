@@ -26,13 +26,14 @@ async def test_paywall_blocks_after_quota(client):
         })
         assert resp.status_code == 200
 
-    # 4th new session from same IP should be blocked
+    # 4th new session from same IP should redirect to login
     resp = await client.get("/_auth/verify", headers={
         "x-forwarded-host": "testapp.example.com",
         "x-forwarded-uri": "/",
         "x-forwarded-for": "10.0.0.99",
     })
-    assert resp.status_code == 403
+    assert resp.status_code == 302
+    assert "/_auth/login" in resp.headers.get("location", "")
 
 
 @pytest.mark.asyncio

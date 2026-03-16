@@ -11,7 +11,7 @@ async def test_rate_limit_allows_within_limit(client):
             "x-forwarded-uri": "/",
             "x-forwarded-for": "10.1.0.1",
         })
-        assert resp.status_code in (200, 403), f"Request {i + 1} unexpected status"
+        assert resp.status_code in (200, 302), f"Request {i + 1} unexpected status"
 
 
 @pytest.mark.asyncio

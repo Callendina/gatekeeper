@@ -25,8 +25,8 @@ async def test_protected_path_without_auth_returns_401(client):
         "x-forwarded-host": "testapp.example.com",
         "x-forwarded-uri": "/protected/secret",
     })
-    assert resp.status_code == 401
-    assert "x-gatekeeper-login-url" in resp.headers
+    assert resp.status_code == 302
+    assert "/_auth/login" in resp.headers.get("location", "")
 
 
 @pytest.mark.asyncio
