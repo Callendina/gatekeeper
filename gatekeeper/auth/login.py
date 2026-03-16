@@ -104,6 +104,7 @@ async def google_login(request: Request, app: str = "", next: str = "/"):
     redirect_uri = str(request.url_for("google_callback"))
     request.session["oauth_app"] = app
     request.session["oauth_next"] = next
+    request.session["oauth_origin_host"] = request.headers.get("host", "")
     return await oauth.google.authorize_redirect(request, redirect_uri)
 
 
@@ -130,6 +131,7 @@ async def github_login(request: Request, app: str = "", next: str = "/"):
     redirect_uri = str(request.url_for("github_callback"))
     request.session["oauth_app"] = app
     request.session["oauth_next"] = next
+    request.session["oauth_origin_host"] = request.headers.get("host", "")
     return await oauth.github.authorize_redirect(request, redirect_uri)
 
 
@@ -172,6 +174,7 @@ async def _handle_oauth_callback(
 ):
     app_slug = request.session.pop("oauth_app", "")
     next_url = request.session.pop("oauth_next", "/")
+    origin_host = request.session.pop("oauth_origin_host", "")
     app_config = _config.apps.get(app_slug)
 
     # Check if OAuth account already linked
@@ -216,9 +219,13 @@ async def _handle_oauth_callback(
     ip = _get_client_ip(request)
     session_token = await create_session(db, user_id, app_slug, ip)
 
-    redirect_url = next_url
-    if app_config and app_config.domains:
+    # Redirect back to where the user started the OAuth flow
+    if origin_host:
+        redirect_url = f"https://{origin_host}{next_url}"
+    elif app_config and app_config.domains:
         redirect_url = f"https://{app_config.domains[0]}{next_url}"
+    else:
+        redirect_url = next_url
 
     response = RedirectResponse(url=redirect_url, status_code=302)
     response.set_cookie(
