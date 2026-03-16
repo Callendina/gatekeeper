@@ -6,8 +6,8 @@ This document is for Claude Code sessions (or developers) working on apps that n
 
 Gatekeeper handles all authentication centrally. Your app does NOT need to:
 - Manage user accounts or passwords
-- Handle OAuth flows
-- Implement login/register pages
+- Handle OAuth flows (Google, GitHub)
+- Implement login pages
 - Check session cookies
 - Rate limit or block IPs
 
@@ -213,10 +213,9 @@ Response format:
 
 When migrating to gatekeeper, remove:
 
-1. **Login/register routes** — gatekeeper serves these at `/_auth/login` and `/_auth/register`
-2. **Password storage/hashing** — gatekeeper handles this
-3. **Session management** — gatekeeper handles cookies and session validation
-4. **OAuth configuration** — gatekeeper handles Google OAuth
+1. **Login routes** — gatekeeper serves the OAuth login page at `/_auth/login`
+2. **Session management** — gatekeeper handles cookies and session validation
+3. **OAuth configuration** — gatekeeper handles Google and GitHub OAuth
 5. **Caddy basicauth directives** — replaced by `forward_auth`
 6. **User database tables** — user identity is now managed by gatekeeper. Your app may still store app-specific user preferences keyed by email.
 
@@ -232,10 +231,10 @@ These are served by gatekeeper through Caddy. You can link to them from your app
 
 | URL | Purpose |
 |-----|---------|
-| `/_auth/login?app=SLUG&next=/path` | Login page (redirects back to `next` after login) |
-| `/_auth/register?app=SLUG` | Registration page |
+| `/_auth/login?app=SLUG&next=/path` | Login page with OAuth provider buttons |
 | `/_auth/logout?app=SLUG` | Logout (clears session, redirects to app root) |
 | `/_auth/oauth/google?app=SLUG&next=/path` | Direct Google OAuth login |
+| `/_auth/oauth/github?app=SLUG&next=/path` | Direct GitHub OAuth login |
 
 Replace `SLUG` with your app's slug as defined in gatekeeper's `config.yaml`.
 
@@ -269,9 +268,8 @@ myapp.example.com {
 - [ ] Update your Caddyfile to use `forward_auth` (see above)
 - [ ] Add a helper function to read `X-Gatekeeper-User` and `X-Gatekeeper-Role` headers
 - [ ] Replace all auth checks in your routes with header-based checks
-- [ ] Remove login/register routes and templates
-- [ ] Remove password hashing and session management code
-- [ ] Remove OAuth configuration
+- [ ] Remove login routes and templates
+- [ ] Remove password hashing, session management, and OAuth code
 - [ ] If your app stores user data, migrate the key from internal user ID to email
 - [ ] If your JS frontend needs user info, add a `/api/me` endpoint or embed in template
 - [ ] If your app uses API keys: add `header_up X-Forwarded-API-Key {header.X-API-Key}` to Caddy config

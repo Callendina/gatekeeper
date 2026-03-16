@@ -34,8 +34,8 @@ When gatekeeper returns 200, it sets these headers that Caddy copies to the upst
 
 - **Python 3.11+** with **FastAPI** and **uvicorn**
 - **SQLite** via SQLAlchemy async (aiosqlite)
-- **authlib** for Google OAuth
-- **passlib[bcrypt]** for password hashing
+- **authlib** for OAuth (Google, GitHub)
+- **httpx** for OAuth provider API calls
 - **Jinja2** templates for login/register/admin UI
 
 ## Project structure
@@ -50,8 +50,8 @@ gatekeeper/
     forward_auth.py   - The /_auth/verify endpoint (core of the system)
     login.py          - Login, register, OAuth, logout routes
     oauth.py          - Google OAuth setup
-    passwords.py      - bcrypt hashing
     sessions.py       - Session create/validate/delete
+    api_keys.py       - API key issuance and validation
   middleware/
     ip_block.py       - IP blocklist (DB + in-memory cache)
     rate_limit.py     - In-memory sliding window rate limiter
@@ -83,10 +83,8 @@ See `config.example.yaml`. Each app is identified by a slug and mapped to domain
 
 ## Creating the first admin user
 
-After initial setup, manually set `is_system_admin=True` in the SQLite database:
+Sign in via OAuth first, then promote:
 
 ```bash
-sqlite3 gatekeeper.db "UPDATE users SET is_system_admin = 1 WHERE email = 'your@email.com';"
+python create_admin.py your@email.com
 ```
-
-Or add a management command later.

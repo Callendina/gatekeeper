@@ -1,5 +1,4 @@
 from authlib.integrations.starlette_client import OAuth
-from starlette.requests import Request
 from gatekeeper.config import GatekeeperConfig
 
 oauth = OAuth()
@@ -15,17 +14,13 @@ def setup_oauth(config: GatekeeperConfig):
             client_kwargs={"scope": "openid email profile"},
         )
 
-
-async def get_google_redirect_url(request: Request, redirect_uri: str) -> str:
-    return await oauth.google.authorize_redirect(request, redirect_uri)
-
-
-async def handle_google_callback(request: Request) -> dict:
-    """Returns dict with keys: email, name, sub (Google user ID)."""
-    token = await oauth.google.authorize_access_token(request)
-    userinfo = token.get("userinfo")
-    return {
-        "email": userinfo["email"],
-        "name": userinfo.get("name", userinfo["email"]),
-        "sub": userinfo["sub"],
-    }
+    if config.github_client_id:
+        oauth.register(
+            name="github",
+            client_id=config.github_client_id,
+            client_secret=config.github_client_secret,
+            access_token_url="https://github.com/login/oauth/access_token",
+            authorize_url="https://github.com/login/oauth/authorize",
+            api_base_url="https://api.github.com/",
+            client_kwargs={"scope": "user:email"},
+        )

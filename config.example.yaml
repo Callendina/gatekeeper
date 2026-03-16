@@ -15,6 +15,9 @@ oauth:
   google:
     client_id: ""
     client_secret: ""
+  github:
+    client_id: ""
+    client_secret: ""
 
 # Each app that gatekeeper protects
 apps:

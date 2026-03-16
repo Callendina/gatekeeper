@@ -56,6 +56,8 @@ class GatekeeperConfig:
     database_path: str = "gatekeeper.db"
     google_client_id: str = ""
     google_client_secret: str = ""
+    github_client_id: str = ""
+    github_client_secret: str = ""
     apps: dict[str, AppConfig] = field(default_factory=dict)
     rate_limit: RateLimitConfig = field(default_factory=RateLimitConfig)
 
@@ -76,7 +78,8 @@ def load_config(path: str = "config.yaml") -> GatekeeperConfig:
 
     server = raw.get("server", {})
     db = raw.get("database", {})
-    oauth = raw.get("oauth", {}).get("google", {})
+    oauth_google = raw.get("oauth", {}).get("google", {})
+    oauth_github = raw.get("oauth", {}).get("github", {})
     rl = raw.get("rate_limit", {})
 
     apps = {}
@@ -110,8 +113,10 @@ def load_config(path: str = "config.yaml") -> GatekeeperConfig:
         port=server.get("port", 9100),
         secret_key=server.get("secret_key", ""),
         database_path=db.get("path", "gatekeeper.db"),
-        google_client_id=oauth.get("client_id", ""),
-        google_client_secret=oauth.get("client_secret", ""),
+        google_client_id=oauth_google.get("client_id", ""),
+        google_client_secret=oauth_google.get("client_secret", ""),
+        github_client_id=oauth_github.get("client_id", ""),
+        github_client_secret=oauth_github.get("client_secret", ""),
         apps=apps,
         rate_limit=RateLimitConfig(
             requests_per_minute=rl.get("requests_per_minute", 120),

@@ -5,31 +5,23 @@
     <h1>Sign In</h1>
     <h2>{{ app_name }}</h2>
 
-    {% if error %}
-    <div class="error">{{ error }}</div>
-    {% endif %}
-
-    <form method="POST" action="/_auth/login">
-        <input type="hidden" name="app" value="{{ app }}">
-        <input type="hidden" name="next" value="{{ next }}">
-        <div class="form-group">
-            <label for="email">Email</label>
-            <input type="email" id="email" name="email" required>
-        </div>
-        <div class="form-group">
-            <label for="password">Password</label>
-            <input type="password" id="password" name="password" required>
-        </div>
-        <button type="submit" class="btn btn-primary">Sign In</button>
-    </form>
-
     {% if has_google %}
-    <div class="divider">or</div>
     <a href="/_auth/oauth/google?app={{ app }}&next={{ next }}" class="btn btn-google">Sign in with Google</a>
     {% endif %}
 
-    <div class="link">
-        Don't have an account? <a href="/_auth/register?app={{ app }}">Register</a>
-    </div>
+    {% if has_google and has_github %}
+    <div class="divider">or</div>
+    {% endif %}
+
+    {% if has_github %}
+    <a href="/_auth/oauth/github?app={{ app }}&next={{ next }}" class="btn btn-github">Sign in with GitHub</a>
+    {% endif %}
 </div>
+{% endblock %}
+
+{% block extra_head %}
+<style>
+    .btn-github { background: #24292e; color: white; margin-top: 0.5rem; }
+    .btn-github:hover { background: #1a1e22; }
+</style>
 {% endblock %}

@@ -4,7 +4,7 @@ Centralized authentication, authorization, rate limiting, and soft paywall servi
 
 ## Features
 
-- **Unified authentication** — email/password and Google OAuth, shared across all apps
+- **Unified authentication** — OAuth-only (Google and GitHub), shared across all apps
 - **Per-app roles** — `user`, `admin`, `guest` (configurable per app)
 - **Soft paywall** — let anonymous users access apps freely up to a limit (sessions/week or API calls/hour), then prompt registration
 - **IP blocklist** — manual blocking via admin UI, with one-click block from access logs
@@ -56,12 +56,10 @@ python run.py
 
 ## Create Admin User
 
-```bash
-# Create a new admin user
-python create_admin.py admin@example.com mypassword
+Sign in via Google or GitHub first, then promote:
 
-# Or promote an existing user
-python create_admin.py existing@example.com
+```bash
+python create_admin.py your@email.com
 ```
 
 ## Caddy Configuration
@@ -92,7 +90,7 @@ See [caddy/example.Caddyfile](caddy/example.Caddyfile) for more examples.
 See [config.example.yaml](config.example.yaml). Key sections:
 
 - **`apps`** — each app has a slug, domain list, protected paths, paywall settings, and available roles
-- **`oauth.google`** — Google OAuth client credentials
+- **`oauth.google`** / **`oauth.github`** — OAuth provider credentials
 - **`rate_limit`** — global per-IP rate limit settings
 
 ## Deployment
@@ -103,8 +101,7 @@ One gatekeeper instance runs per server (so the Caddy-to-gatekeeper call is alwa
 
 - Python 3.11+ / FastAPI / uvicorn
 - SQLite via SQLAlchemy async
-- authlib (Google OAuth)
-- passlib + bcrypt (password hashing)
+- authlib (Google + GitHub OAuth)
 - Jinja2 (templates)
 
 ## Integrating Your App
