@@ -127,11 +127,29 @@ async def google_callback(
 # --- GitHub OAuth ---
 
 @router.get("/oauth/github")
-async def github_login(request: Request, app: str = "", next: str = "/"):
-    redirect_uri = str(request.url_for("github_callback"))
+async def github_login(request: Request, app: str = "", next: str = "/", origin: str = ""):
+    current_host = request.headers.get("host", "")
+
+    # GitHub only allows one callback URL per OAuth App, so if a fixed
+    # callback domain is configured, redirect there first
+    if _config.github_callback_domain and current_host != _config.github_callback_domain:
+        # Pass the origin host in the URL so it survives the cross-domain redirect
+        from urllib.parse import quote
+        target = (
+            f"https://{_config.github_callback_domain}/_auth/oauth/github"
+            f"?app={app}&next={quote(next)}&origin={current_host}"
+        )
+        return RedirectResponse(url=target, status_code=302)
+
+    if _config.github_callback_domain:
+        redirect_uri = f"https://{_config.github_callback_domain}/_auth/oauth/github/callback"
+    else:
+        redirect_uri = str(request.url_for("github_callback"))
+
     request.session["oauth_app"] = app
     request.session["oauth_next"] = next
-    request.session["oauth_origin_host"] = request.headers.get("host", "")
+    # Use origin param if provided (cross-domain redirect), otherwise current host
+    request.session["oauth_origin_host"] = origin or current_host
     return await oauth.github.authorize_redirect(request, redirect_uri)
 
 

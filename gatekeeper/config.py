@@ -78,6 +78,10 @@ class GatekeeperConfig:
     google_client_secret: str = ""
     github_client_id: str = ""
     github_client_secret: str = ""
+    # GitHub only allows one callback URL per OAuth App.
+    # Set this to the domain where the callback is registered.
+    # If set, all GitHub OAuth flows route through this domain.
+    github_callback_domain: str = ""
     apps: dict[str, AppConfig] = field(default_factory=dict)
     rate_limit: RateLimitConfig = field(default_factory=RateLimitConfig)
 
@@ -158,6 +162,7 @@ def load_config(path: str = "config.yaml") -> GatekeeperConfig:
         google_client_secret=oauth_google.get("client_secret", ""),
         github_client_id=oauth_github.get("client_id", ""),
         github_client_secret=oauth_github.get("client_secret", ""),
+        github_callback_domain=oauth_github.get("callback_domain", ""),
         apps=apps,
         rate_limit=RateLimitConfig(
             requests_per_minute=rl.get("requests_per_minute", 120),
