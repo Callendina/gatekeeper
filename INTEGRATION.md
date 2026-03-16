@@ -123,6 +123,92 @@ if (!user.email) {
 </script>
 ```
 
+## API Keys (for apps with `api_access.mode: "key_required"`)
+
+Some apps have a JS frontend that also exposes a backend API usable directly. For these apps, gatekeeper enforces that API paths (e.g. `/api/*`) require an `X-API-Key` header. This distinguishes frontend users (who get a key automatically) from direct API callers (who must register).
+
+### How it works
+
+1. **Anonymous frontend user** loads the page — gatekeeper gives them a session cookie
+2. The JS frontend calls `POST /_auth/api-key/temp` to get a short-lived API key (default: 30 minutes)
+3. The frontend includes `X-API-Key: <key>` in all API calls
+4. When the temp key expires, the frontend requests a new one
+5. **Registered users** call `POST /_auth/api-key` to get a long-lived key (default: 365 days)
+6. **Direct API callers** without a session cookie can't get a temp key — they must register, log in, and get a registered key
+
+### Frontend JavaScript integration
+
+```javascript
+let apiKey = null;
+let apiKeyExpires = null;
+
+async function getApiKey() {
+    // Reuse key if still valid (with 60s buffer)
+    if (apiKey && apiKeyExpires && Date.now() < apiKeyExpires - 60000) {
+        return apiKey;
+    }
+    const resp = await fetch("/_auth/api-key/temp", { method: "POST" });
+    if (!resp.ok) {
+        // Session expired or paywall hit — redirect to login/register
+        window.location.href = "/_auth/login?app=YOUR_APP_SLUG";
+        return null;
+    }
+    const data = await resp.json();
+    apiKey = data.api_key;
+    apiKeyExpires = new Date(data.expires_at).getTime();
+    return apiKey;
+}
+
+async function apiCall(path, options = {}) {
+    const key = await getApiKey();
+    if (!key) return null;
+    const headers = { ...options.headers, "X-API-Key": key };
+    return fetch(path, { ...options, headers });
+}
+
+// Usage
+const resp = await apiCall("/api/data");
+```
+
+### Caddy config for API key forwarding
+
+For apps using API keys, Caddy must forward the client's `X-API-Key` header to gatekeeper:
+
+```caddyfile
+webapp.example.com {
+    forward_auth localhost:9100 {
+        uri /_auth/verify
+        header_up X-Forwarded-API-Key {header.X-API-Key}
+        copy_headers X-Gatekeeper-User X-Gatekeeper-Role X-Gatekeeper-System-Admin
+    }
+
+    handle /_auth/* {
+        reverse_proxy localhost:9100
+    }
+
+    handle {
+        reverse_proxy localhost:YOUR_APP_PORT
+    }
+}
+```
+
+### API key endpoints
+
+| Endpoint | Method | Requires | Returns |
+|----------|--------|----------|---------|
+| `/_auth/api-key` | POST | Authenticated session cookie | Long-lived key (JSON) |
+| `/_auth/api-key/temp` | POST | Any valid session cookie (even anonymous) | Short-lived key (JSON) |
+
+Response format:
+```json
+{
+    "api_key": "abc123...",
+    "expires_at": "2026-03-16T12:00:00",
+    "type": "registered",
+    "duration_minutes": 30
+}
+```
+
 ## What to Remove from Your App
 
 When migrating to gatekeeper, remove:
@@ -188,9 +274,12 @@ myapp.example.com {
 - [ ] Remove OAuth configuration
 - [ ] If your app stores user data, migrate the key from internal user ID to email
 - [ ] If your JS frontend needs user info, add a `/api/me` endpoint or embed in template
+- [ ] If your app uses API keys: add `header_up X-Forwarded-API-Key {header.X-API-Key}` to Caddy config
+- [ ] If your app uses API keys: add frontend JS to fetch temp keys and include `X-API-Key` in API calls
 - [ ] Test: anonymous access works (for unprotected paths)
 - [ ] Test: login redirect works (for protected paths)
 - [ ] Test: role-based access works
+- [ ] Test: API key flow works (if applicable) — temp key for anonymous, registered key for authenticated
 - [ ] Remove old user management database tables (after confirming migration is complete)
 
 ## Security Notes

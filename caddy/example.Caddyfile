@@ -7,7 +7,8 @@
 # for checking before proxying to the app. Gatekeeper returns user info in
 # response headers which Caddy copies to the upstream request.
 
-# App 1: myapp.example.com -> localhost:8001
+# App 1: Simple app (no API key requirement)
+# myapp.example.com -> localhost:8001
 myapp.example.com {
 	# All requests go through gatekeeper first
 	forward_auth localhost:9100 {
@@ -27,10 +28,14 @@ myapp.example.com {
 	}
 }
 
-# App 2: api.example.com -> localhost:8002
-api.example.com {
+# App 2: App with JS frontend + API that requires keys
+# The frontend is served normally. API calls need an X-API-Key header.
+# Caddy forwards the client's X-API-Key to gatekeeper as X-Forwarded-API-Key.
+webapp.example.com {
 	forward_auth localhost:9100 {
 		uri /_auth/verify
+		# Forward the client's API key header to gatekeeper for validation
+		header_up X-Forwarded-API-Key {header.X-API-Key}
 		copy_headers X-Gatekeeper-User X-Gatekeeper-Role X-Gatekeeper-System-Admin
 	}
 
@@ -43,10 +48,27 @@ api.example.com {
 	}
 }
 
-# Staging variant: staging.myapp.example.com -> localhost:8003
+# App 3: API-only app (open mode, IP tracking)
+api.example.com {
+	forward_auth localhost:9100 {
+		uri /_auth/verify
+		copy_headers X-Gatekeeper-User X-Gatekeeper-Role X-Gatekeeper-System-Admin
+	}
+
+	handle /_auth/* {
+		reverse_proxy localhost:9100
+	}
+
+	handle {
+		reverse_proxy localhost:8003
+	}
+}
+
+# Staging variant
 staging.myapp.example.com {
 	forward_auth localhost:9100 {
 		uri /_auth/verify
+		header_up X-Forwarded-API-Key {header.X-API-Key}
 		copy_headers X-Gatekeeper-User X-Gatekeeper-Role X-Gatekeeper-System-Admin
 	}
 

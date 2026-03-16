@@ -18,30 +18,59 @@ oauth:
 
 # Each app that gatekeeper protects
 apps:
+
+  # Example 1: Simple app, no API key requirement
   myapp-prod:
-    # Display name
     name: "My App (Production)"
-    # Domains this app is served on (used to identify which app a request is for)
     domains:
       - "myapp.example.com"
-    # Paths that require authentication (all others allow anonymous)
-    # Use "/*" to require auth for everything
     protected_paths:
       - "/admin/*"
-      - "/api/protected/*"
-    # Soft paywall settings (omit to disable)
     paywall:
-      # Max new anonymous sessions per IP per week
       max_sessions_per_week: 10
-      # For API-only: max calls per IP per hour (0 = use session-based tracking)
-      max_api_calls_per_hour: 0
-    # Available roles for this app
     roles:
       - "user"
       - "admin"
-    # Default role assigned on registration ("user" or "guest")
     default_role: "user"
 
+  # Example 2: App with JS frontend + backend API
+  # Frontend pages are open (with paywall). API paths require an API key.
+  # Anonymous frontend users get a temp key (30 min). Registered users get
+  # a long-lived key (365 days).
+  webapp-prod:
+    name: "Web App (Production)"
+    domains:
+      - "webapp.example.com"
+    protected_paths:
+      - "/admin/*"
+    paywall:
+      max_sessions_per_week: 10
+    api_access:
+      mode: "key_required"
+      paths:
+        - "/api/*"
+      temp_key_duration_minutes: 30
+      registered_key_duration_days: 365
+    roles:
+      - "user"
+      - "admin"
+    default_role: "user"
+
+  # Example 3: API-only app (open mode, paywall tracks by IP)
+  api-prod:
+    name: "API Service (Production)"
+    domains:
+      - "api.example.com"
+    paywall:
+      max_api_calls_per_hour: 100
+    api_access:
+      mode: "open"
+    roles:
+      - "user"
+      - "admin"
+    default_role: "user"
+
+  # Example 4: Staging with guest approval workflow
   myapp-staging:
     name: "My App (Staging)"
     domains:

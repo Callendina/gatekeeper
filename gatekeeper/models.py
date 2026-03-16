@@ -103,6 +103,29 @@ class AnonymousUsage(Base):
     )
 
 
+class APIKey(Base):
+    __tablename__ = "api_keys"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    key: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
+    app_slug: Mapped[str] = mapped_column(String(100), nullable=False)
+    # Authenticated user who owns this key (null for temp frontend keys)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    # "registered" (long-lived, user-owned) or "temp" (short-lived, frontend anonymous)
+    key_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    ip_address: Mapped[str] = mapped_column(String(45), nullable=False)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime, default=datetime.datetime.utcnow
+    )
+    expires_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False)
+
+    user: Mapped["User | None"] = relationship()
+
+    __table_args__ = (
+        Index("ix_apikey_user_app", "user_id", "app_slug"),
+    )
+
+
 class AccessLog(Base):
     __tablename__ = "access_log"
 

@@ -20,6 +20,7 @@ from gatekeeper.auth.sessions import validate_session, create_session
 from gatekeeper.middleware.ip_block import is_ip_blocked
 from gatekeeper.middleware.rate_limit import check_rate_limit
 from gatekeeper.middleware.paywall import check_paywall
+from gatekeeper.auth.api_keys import validate_api_key
 from gatekeeper.models import AccessLog
 
 import fnmatch
@@ -67,14 +68,53 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
         await _log(db, ip, app.slug, path, method, None, "rate_limited")
         return Response(status_code=429, content="Rate limited")
 
-    # 3. Check session
+    # 3. Check if this is an API path requiring a key
+    is_api_path = app.api_access.enabled and _path_matches_any(path, app.api_access.paths)
+
+    if is_api_path:
+        # API paths in key_required mode: must have a valid X-API-Key
+        api_key_header = request.headers.get("x-forwarded-api-key", "")
+        if not api_key_header:
+            await _log(db, ip, app.slug, path, method, None, "api_key_missing")
+            return Response(
+                status_code=401,
+                content="API key required. See /_auth/api-key for details.",
+            )
+
+        api_key_obj, api_user, api_role = await validate_api_key(db, api_key_header, app.slug)
+        if api_key_obj is None:
+            await _log(db, ip, app.slug, path, method, None, "api_key_invalid")
+            return Response(status_code=401, content="Invalid or expired API key")
+
+        # Valid API key — check paywall for temp keys (anonymous usage)
+        if api_key_obj.key_type == "temp" and app.paywall.enabled:
+            paywall_ok = await check_paywall(db, ip, app, session_token=None)
+            if not paywall_ok:
+                await _log(db, ip, app.slug, path, method, None, "paywall")
+                return Response(status_code=403, content="Usage limit exceeded. Please register.")
+
+        # Allowed via API key
+        response = Response(status_code=200)
+        if api_user:
+            response.headers["X-Gatekeeper-User"] = api_user.email
+            response.headers["X-Gatekeeper-Role"] = api_role or ""
+            if api_user.is_system_admin:
+                response.headers["X-Gatekeeper-System-Admin"] = "true"
+            await _log(db, ip, app.slug, path, method, api_user.email, "allowed")
+        else:
+            response.headers["X-Gatekeeper-User"] = ""
+            response.headers["X-Gatekeeper-Role"] = ""
+            await _log(db, ip, app.slug, path, method, None, "allowed")
+        return response
+
+    # 4. Non-API paths: check session
     session_token = request.cookies.get("gk_session")
     session, user, role = None, None, None
 
     if session_token:
         session, user, role = await validate_session(db, session_token, app.slug)
 
-    # 4. If path requires auth and user is not authenticated
+    # 5. If path requires auth and user is not authenticated
     is_protected = _path_matches_any(path, app.protected_paths)
 
     if is_protected and user is None:
@@ -86,7 +126,7 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
             content="Authentication required",
         )
 
-    # 5. Check paywall for anonymous users
+    # 6. Check paywall for anonymous users
     if user is None and app.paywall.enabled:
         paywall_ok = await check_paywall(db, ip, app, session_token=session_token)
         if not paywall_ok:
@@ -98,7 +138,7 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
                 content="Registration required",
             )
 
-    # 6. Create anonymous session if none exists (for tracking)
+    # 7. Create anonymous session if none exists (for tracking)
     if session is None and app.paywall.enabled:
         token = await create_session(db, None, app.slug, ip)
         response = Response(status_code=200)
@@ -112,7 +152,7 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
         await _log(db, ip, app.slug, path, method, None, "allowed")
         return response
 
-    # 7. Allowed — return user info headers
+    # 8. Allowed — return user info headers
     response = Response(status_code=200)
     if user:
         response.headers["X-Gatekeeper-User"] = user.email

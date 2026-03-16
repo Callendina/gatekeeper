@@ -14,12 +14,30 @@ class PaywallConfig:
 
 
 @dataclass
+class APIAccessConfig:
+    # "open" = no key needed, IP tracking only
+    # "key_required" = API paths need an X-API-Key header
+    mode: str = "open"
+    # Glob patterns for paths that are considered API paths
+    paths: list[str] = field(default_factory=list)
+    # How long a temp key lasts (for anonymous frontend users)
+    temp_key_duration_minutes: int = 30
+    # How long a registered user's key lasts
+    registered_key_duration_days: int = 365
+
+    @property
+    def enabled(self) -> bool:
+        return self.mode == "key_required" and len(self.paths) > 0
+
+
+@dataclass
 class AppConfig:
     slug: str
     name: str
     domains: list[str]
     protected_paths: list[str] = field(default_factory=list)
     paywall: PaywallConfig = field(default_factory=PaywallConfig)
+    api_access: APIAccessConfig = field(default_factory=APIAccessConfig)
     roles: list[str] = field(default_factory=lambda: ["user", "admin"])
     default_role: str = "user"
 
@@ -68,12 +86,21 @@ def load_config(path: str = "config.yaml") -> GatekeeperConfig:
             max_sessions_per_week=paywall_raw.get("max_sessions_per_week", 0),
             max_api_calls_per_hour=paywall_raw.get("max_api_calls_per_hour", 0),
         )
+        api_raw = app_raw.get("api_access", {})
+        api_access = APIAccessConfig(
+            mode=api_raw.get("mode", "open"),
+            paths=api_raw.get("paths", []),
+            temp_key_duration_minutes=api_raw.get("temp_key_duration_minutes", 30),
+            registered_key_duration_days=api_raw.get("registered_key_duration_days", 365),
+        )
+
         apps[slug] = AppConfig(
             slug=slug,
             name=app_raw.get("name", slug),
             domains=app_raw.get("domains", []),
             protected_paths=app_raw.get("protected_paths", []),
             paywall=paywall,
+            api_access=api_access,
             roles=app_raw.get("roles", ["user", "admin"]),
             default_role=app_raw.get("default_role", "user"),
         )
