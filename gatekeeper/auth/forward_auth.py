@@ -88,7 +88,7 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
 
     # 5. Check paywall for anonymous users
     if user is None and app.paywall.enabled:
-        paywall_ok = await check_paywall(db, ip, app)
+        paywall_ok = await check_paywall(db, ip, app, session_token=session_token)
         if not paywall_ok:
             await _log(db, ip, app.slug, path, method, None, "paywall")
             register_url = f"/_auth/register?app={app.slug}"

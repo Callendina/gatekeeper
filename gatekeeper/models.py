@@ -83,8 +83,12 @@ class AnonymousUsage(Base):
     __tablename__ = "anonymous_usage"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    ip_address: Mapped[str] = mapped_column(String(45), nullable=False)
+    # For session-based apps: keyed by cookie token. For API-only: keyed by IP.
+    tracking_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    tracking_type: Mapped[str] = mapped_column(String(10), nullable=False)  # "cookie" or "ip"
     app_slug: Mapped[str] = mapped_column(String(100), nullable=False)
+    # Also record IP even for cookie-tracked entries (for cross-referencing)
+    ip_address: Mapped[str] = mapped_column(String(45), nullable=False)
     # For session-based tracking: count of new sessions in current window
     session_count: Mapped[int] = mapped_column(Integer, default=0)
     # For API call tracking: count of calls in current window
@@ -95,7 +99,7 @@ class AnonymousUsage(Base):
     )
 
     __table_args__ = (
-        Index("ix_anon_ip_app", "ip_address", "app_slug", unique=True),
+        Index("ix_anon_key_app", "tracking_key", "app_slug", unique=True),
     )
 
 
