@@ -1,6 +1,6 @@
 """OAuth login and logout routes served by gatekeeper."""
 from fastapi import APIRouter, Request, Depends
-from fastapi.responses import RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -48,6 +48,20 @@ async def login_page(request: Request, app: str = "", next: str = "/"):
 async def nag_page(request: Request, app: str = "", next: str = "/"):
     app_config = _config.apps.get(app)
     app_name = app_config.name if app_config else "Application"
+
+    # If the app has a custom nag HTML file, serve it with placeholders replaced
+    if app_config and app_config.paywall.nag_html_file:
+        try:
+            with open(app_config.paywall.nag_html_file) as f:
+                html = f.read()
+            html = html.replace("{{APP_NAME}}", app_name)
+            html = html.replace("{{LOGIN_GOOGLE_URL}}", f"/_auth/oauth/google?app={app}&next={next}")
+            html = html.replace("{{LOGIN_GITHUB_URL}}", f"/_auth/oauth/github?app={app}&next={next}")
+            html = html.replace("{{DISMISS_URL}}", f"/_auth/nag/dismiss?next={next}")
+            return HTMLResponse(html)
+        except FileNotFoundError:
+            pass  # Fall through to default template
+
     return templates.TemplateResponse("auth/nag.html", {
         "request": request,
         "app": app,

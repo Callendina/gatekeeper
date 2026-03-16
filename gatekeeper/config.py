@@ -11,6 +11,14 @@ class PaywallConfig:
     # max_sessions_per_week, show a dismissable nag screen instead of blocking.
     # Set to 0 to disable nag (goes straight from allowed to blocked).
     nag_after_sessions: int = 0
+    # Optional path to a custom nag HTML file. If set, this file is served
+    # as the nag page instead of gatekeeper's default template.
+    # The HTML can use these placeholders (replaced at serve time):
+    #   {{LOGIN_GOOGLE_URL}} - Google OAuth login link
+    #   {{LOGIN_GITHUB_URL}} - GitHub OAuth login link
+    #   {{DISMISS_URL}} - "Not right now" link (sets cookie, redirects back)
+    #   {{APP_NAME}} - the app's display name
+    nag_html_file: str = ""
 
     @property
     def enabled(self) -> bool:
@@ -97,6 +105,7 @@ def load_config(path: str = "config.yaml") -> GatekeeperConfig:
             max_sessions_per_week=paywall_raw.get("max_sessions_per_week", 0),
             max_api_calls_per_hour=paywall_raw.get("max_api_calls_per_hour", 0),
             nag_after_sessions=paywall_raw.get("nag_after_sessions", 0),
+            nag_html_file=paywall_raw.get("nag_html_file", ""),
         )
         api_raw = app_raw.get("api_access", {})
         api_access = APIAccessConfig(
