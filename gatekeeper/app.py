@@ -50,6 +50,10 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Gatekeeper", docs_url=None, redoc_url=None, lifespan=lifespan)
 
+# Trust X-Forwarded-Proto/Host from Caddy so url_for() generates correct URLs
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=["127.0.0.1", "localhost"])
+
 # Session middleware needed for OAuth state
 app.add_middleware(SessionMiddleware, secret_key=config.secret_key)
 
