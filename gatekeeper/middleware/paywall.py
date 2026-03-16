@@ -2,8 +2,10 @@
 
 Session-based apps: tracked by the anonymous session cookie, so a user changing
 IPs still counts against the same quota. Falls back to IP if no cookie.
+The session counter only increments when a NEW session is created, not on every request.
 
 API-only apps: tracked by IP (no cookies in API calls).
+The API call counter increments on every request.
 """
 import datetime
 from sqlalchemy import select
@@ -15,48 +17,65 @@ from gatekeeper.config import AppConfig
 async def check_paywall(
     db: AsyncSession, ip: str, app: AppConfig, session_token: str | None = None
 ) -> bool:
-    """Returns True if the anonymous user is within their free quota."""
+    """Returns True if the anonymous user is within their free quota.
+
+    For session-based tracking, this should be called with is_new_session=False
+    on normal requests. Use record_new_session() when a new anonymous session
+    is actually created.
+    """
     if not app.paywall.enabled:
         return True
 
     is_api_mode = app.paywall.max_api_calls_per_hour > 0
 
-    # Determine tracking key: cookie for session apps, IP for API apps
-    if is_api_mode or not session_token:
-        tracking_key = ip
-        tracking_type = "ip"
-    else:
-        tracking_key = session_token
-        tracking_type = "cookie"
-
-    usage = await _get_or_create_usage(db, tracking_key, tracking_type, app.slug, ip)
-
-    now = datetime.datetime.utcnow()
-
     if is_api_mode:
+        # API mode: increment on every call, track by IP
+        usage = await _get_or_create_usage(db, ip, "ip", app.slug, ip)
+        now = datetime.datetime.utcnow()
         window_duration = datetime.timedelta(hours=1)
         if now - usage.window_start > window_duration:
             usage.api_call_count = 0
             usage.window_start = now
-
         usage.api_call_count += 1
-        # Update IP in case it changed (cookie-tracked entries)
         usage.ip_address = ip
         await db.commit()
         return usage.api_call_count <= app.paywall.max_api_calls_per_hour
 
     if app.paywall.max_sessions_per_week > 0:
+        # Session mode: just CHECK the count, don't increment.
+        # The count is incremented by record_new_session() below.
+        tracking_key = session_token if session_token else ip
+        tracking_type = "cookie" if session_token else "ip"
+        usage = await _get_or_create_usage(db, tracking_key, tracking_type, app.slug, ip)
+        now = datetime.datetime.utcnow()
         window_duration = datetime.timedelta(weeks=1)
         if now - usage.window_start > window_duration:
             usage.session_count = 0
             usage.window_start = now
-
-        usage.session_count += 1
-        usage.ip_address = ip
-        await db.commit()
+            await db.commit()
         return usage.session_count <= app.paywall.max_sessions_per_week
 
     return True
+
+
+async def record_new_session(
+    db: AsyncSession, ip: str, app: AppConfig
+) -> bool:
+    """Record that a new anonymous session was created. Returns True if within quota."""
+    if not app.paywall.enabled or app.paywall.max_sessions_per_week <= 0:
+        return True
+
+    # Always track by IP when recording new sessions, since the cookie
+    # doesn't exist yet at this point
+    usage = await _get_or_create_usage(db, ip, "ip", app.slug, ip)
+    now = datetime.datetime.utcnow()
+    window_duration = datetime.timedelta(weeks=1)
+    if now - usage.window_start > window_duration:
+        usage.session_count = 0
+        usage.window_start = now
+    usage.session_count += 1
+    await db.commit()
+    return usage.session_count <= app.paywall.max_sessions_per_week
 
 
 async def _get_or_create_usage(

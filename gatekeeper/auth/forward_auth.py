@@ -19,7 +19,7 @@ from gatekeeper.config import GatekeeperConfig, AppConfig
 from gatekeeper.auth.sessions import validate_session, create_session
 from gatekeeper.middleware.ip_block import is_ip_blocked
 from gatekeeper.middleware.rate_limit import check_rate_limit
-from gatekeeper.middleware.paywall import check_paywall
+from gatekeeper.middleware.paywall import check_paywall, record_new_session
 from gatekeeper.auth.api_keys import validate_api_key
 from gatekeeper.models import AccessLog
 
@@ -140,6 +140,17 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
 
     # 7. Create anonymous session if none exists (for tracking)
     if session is None and app.paywall.enabled:
+        # Record the new session for paywall counting
+        within_quota = await record_new_session(db, ip, app)
+        if not within_quota:
+            await _log(db, ip, app.slug, path, method, None, "paywall")
+            login_url = f"/_auth/login?app={app.slug}"
+            return Response(
+                status_code=403,
+                headers={"X-Gatekeeper-Register-URL": login_url},
+                content="Registration required",
+            )
+
         token = await create_session(db, None, app.slug, ip)
         response = Response(status_code=200)
         response.set_cookie(
