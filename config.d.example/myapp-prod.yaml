@@ -1,0 +1,19 @@
+# Example per-app config fragment.
+# Place in config.d/ as <app-slug>.yaml
+# The filename (minus .yaml) becomes the app slug.
+
+name: "My App (Production)"
+domains:
+  - "myapp.example.com"
+protected_paths:
+  - "/admin/*"
+paywall:
+  nag_after_sessions: 5
+  max_sessions_per_week: 10
+  # nag_html_file: "/home/jonnosan/myapp/nag.html"
+# login_html_file: "/home/jonnosan/myapp/login.html"
+# allowed_emails: []  # empty = anyone can sign in
+roles:
+  - "user"
+  - "admin"
+default_role: "user"

@@ -88,6 +88,35 @@ class GatekeeperConfig:
         return None
 
 
+def _parse_app_config(slug: str, app_raw: dict) -> AppConfig:
+    paywall_raw = app_raw.get("paywall", {})
+    paywall = PaywallConfig(
+        max_sessions_per_week=paywall_raw.get("max_sessions_per_week", 0),
+        max_api_calls_per_hour=paywall_raw.get("max_api_calls_per_hour", 0),
+        nag_after_sessions=paywall_raw.get("nag_after_sessions", 0),
+        nag_html_file=paywall_raw.get("nag_html_file", ""),
+    )
+    api_raw = app_raw.get("api_access", {})
+    api_access = APIAccessConfig(
+        mode=api_raw.get("mode", "open"),
+        paths=api_raw.get("paths", []),
+        temp_key_duration_minutes=api_raw.get("temp_key_duration_minutes", 30),
+        registered_key_duration_days=api_raw.get("registered_key_duration_days", 365),
+    )
+    return AppConfig(
+        slug=slug,
+        name=app_raw.get("name", slug),
+        domains=app_raw.get("domains", []),
+        protected_paths=app_raw.get("protected_paths", []),
+        paywall=paywall,
+        api_access=api_access,
+        roles=app_raw.get("roles", ["user", "admin"]),
+        login_html_file=app_raw.get("login_html_file", ""),
+        allowed_emails=app_raw.get("allowed_emails", []),
+        default_role=app_raw.get("default_role", "user"),
+    )
+
+
 def load_config(path: str = "config.yaml") -> GatekeeperConfig:
     config_path = Path(path)
     if not config_path.exists():
@@ -104,33 +133,20 @@ def load_config(path: str = "config.yaml") -> GatekeeperConfig:
 
     apps = {}
     for slug, app_raw in raw.get("apps", {}).items():
-        paywall_raw = app_raw.get("paywall", {})
-        paywall = PaywallConfig(
-            max_sessions_per_week=paywall_raw.get("max_sessions_per_week", 0),
-            max_api_calls_per_hour=paywall_raw.get("max_api_calls_per_hour", 0),
-            nag_after_sessions=paywall_raw.get("nag_after_sessions", 0),
-            nag_html_file=paywall_raw.get("nag_html_file", ""),
-        )
-        api_raw = app_raw.get("api_access", {})
-        api_access = APIAccessConfig(
-            mode=api_raw.get("mode", "open"),
-            paths=api_raw.get("paths", []),
-            temp_key_duration_minutes=api_raw.get("temp_key_duration_minutes", 30),
-            registered_key_duration_days=api_raw.get("registered_key_duration_days", 365),
-        )
+        apps[slug] = _parse_app_config(slug, app_raw)
 
-        apps[slug] = AppConfig(
-            slug=slug,
-            name=app_raw.get("name", slug),
-            domains=app_raw.get("domains", []),
-            protected_paths=app_raw.get("protected_paths", []),
-            paywall=paywall,
-            api_access=api_access,
-            roles=app_raw.get("roles", ["user", "admin"]),
-            login_html_file=app_raw.get("login_html_file", ""),
-            allowed_emails=app_raw.get("allowed_emails", []),
-            default_role=app_raw.get("default_role", "user"),
-        )
+    # Load per-app config fragments from config.d/
+    config_d = config_path.parent / "config.d"
+    if config_d.is_dir():
+        import logging
+        logger = logging.getLogger("gatekeeper.config")
+        for fragment_path in sorted(config_d.glob("*.yaml")):
+            slug = fragment_path.stem
+            with open(fragment_path) as f:
+                app_raw = yaml.safe_load(f)
+            if app_raw and isinstance(app_raw, dict):
+                apps[slug] = _parse_app_config(slug, app_raw)
+                logger.info(f"Loaded app config fragment: {fragment_path.name} (slug: {slug})")
 
     return GatekeeperConfig(
         host=server.get("host", "127.0.0.1"),

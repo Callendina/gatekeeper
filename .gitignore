@@ -3,6 +3,7 @@ __pycache__/
 *.pyo
 *.db
 config.yaml
+config.d/
 .env
 *.egg-info/
 dist/
