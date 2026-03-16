@@ -8,7 +8,7 @@ import asyncio
 import sys
 from sqlalchemy import select
 from gatekeeper.config import load_config
-from gatekeeper.database import init_db, async_session_factory
+from gatekeeper.database import init_db
 from gatekeeper.models import User
 
 
@@ -24,6 +24,7 @@ async def main():
     config = load_config()
     await init_db(config.database_path)
 
+    from gatekeeper.database import async_session_factory
     async with async_session_factory() as db:
         result = await db.execute(select(User).where(User.email == email))
         user = result.scalar_one_or_none()
