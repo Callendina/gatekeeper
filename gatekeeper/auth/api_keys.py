@@ -103,10 +103,6 @@ async def issue_temp_key(
     Requires a valid gk_session cookie (even an anonymous one — this proves
     the caller is coming from the frontend, not calling the API directly).
     """
-    session_token = request.cookies.get("gk_session")
-    if not session_token:
-        return JSONResponse({"error": "No session — are you accessing this from the frontend?"}, status_code=401)
-
     host = request.headers.get("host", "")
     app = _config.app_for_domain(host)
     if app is None:
@@ -115,12 +111,39 @@ async def issue_temp_key(
     if not app.api_access.enabled:
         return JSONResponse({"error": "API keys not enabled for this app"}, status_code=400)
 
-    # Validate the session exists (even if anonymous)
-    session, user, role = await validate_session(db, session_token, app.slug)
+    # Check for existing session, or create anonymous one if none exists.
+    # This handles the case where forward_auth can't pass Set-Cookie back
+    # (Caddy < 2.7 doesn't support copy_response_headers).
+    session_token = request.cookies.get("gk_session")
+    set_cookie_token = None  # if set, we need to set the cookie in the response
+    session, user, role = None, None, None
+
+    if session_token:
+        session, user, role = await validate_session(db, session_token, app.slug)
+
     if session is None:
-        return JSONResponse({"error": "Invalid session"}, status_code=401)
+        # Create anonymous session and set cookie in response
+        ip = _get_client_ip(request)
+        from .sessions import create_session
+        set_cookie_token = await create_session(db, None, app.slug, ip)
+        session_token = set_cookie_token
+        # Re-validate to get the session object
+        session, user, role = await validate_session(db, session_token, app.slug)
+
+    if session is None:
+        return JSONResponse({"error": "Could not create session"}, status_code=500)
 
     ip = _get_client_ip(request)
+
+    def _maybe_set_cookie(response):
+        """Set gk_session cookie if we created a new anonymous session."""
+        if set_cookie_token:
+            response.set_cookie(
+                "gk_session", set_cookie_token,
+                httponly=True, secure=True, samesite="lax",
+                max_age=86400 * 7,
+            )
+        return response
 
     # If the user is authenticated, just issue a registered key instead
     if user is not None:
@@ -142,11 +165,11 @@ async def issue_temp_key(
         )
         db.add(api_key)
         await db.commit()
-        return JSONResponse({
+        return _maybe_set_cookie(JSONResponse({
             "api_key": key,
             "expires_at": expires_at.isoformat(),
             "type": "registered",
-        })
+        }))
 
     # Anonymous user: issue a short-lived temp key
     key = secrets.token_urlsafe(32)
@@ -161,12 +184,12 @@ async def issue_temp_key(
     db.add(api_key)
     await db.commit()
 
-    return JSONResponse({
+    return _maybe_set_cookie(JSONResponse({
         "api_key": key,
         "expires_at": expires_at.isoformat(),
         "type": "temp",
         "duration_minutes": app.api_access.temp_key_duration_minutes,
-    })
+    }))
 
 
 async def validate_api_key(
