@@ -22,18 +22,29 @@ def init_admin_routes(config: GatekeeperConfig):
     _config = config
 
 
-async def _require_admin(request: Request):
-    """Check that the request is from a system admin."""
-    user_email = request.headers.get("x-gatekeeper-user", "")
-    is_admin = request.headers.get("x-gatekeeper-system-admin", "") == "true"
-    if not user_email or not is_admin:
+async def _require_admin(request: Request, db: AsyncSession):
+    """Check that the request is from a system admin by validating the session cookie."""
+    from gatekeeper.auth.sessions import validate_session
+
+    session_token = request.cookies.get("gk_session")
+    if not session_token:
         return None
-    return user_email
+
+    # Admin routes are under /_auth/ which bypasses forward_auth,
+    # so we can't rely on X-Gatekeeper headers. Check the session
+    # directly. We try all configured app slugs since the admin
+    # may be accessing from any app domain.
+    for app_slug in _config.apps:
+        session, user, role = await validate_session(db, session_token, app_slug)
+        if user and user.is_system_admin:
+            return user.email
+
+    return None
 
 
 @router.get("")
 async def admin_dashboard(request: Request, db: AsyncSession = Depends(get_db)):
-    admin = await _require_admin(request)
+    admin = await _require_admin(request, db)
     if not admin:
         return HTMLResponse("Access denied", status_code=403)
 
@@ -51,7 +62,7 @@ async def admin_dashboard(request: Request, db: AsyncSession = Depends(get_db)):
 
 @router.get("/users")
 async def list_users(request: Request, db: AsyncSession = Depends(get_db)):
-    admin = await _require_admin(request)
+    admin = await _require_admin(request, db)
     if not admin:
         return HTMLResponse("Access denied", status_code=403)
 
@@ -83,7 +94,7 @@ async def update_user_role(
     role: str = Form(...),
     db: AsyncSession = Depends(get_db),
 ):
-    admin = await _require_admin(request)
+    admin = await _require_admin(request, db)
     if not admin:
         return HTMLResponse("Access denied", status_code=403)
 
@@ -106,7 +117,7 @@ async def update_user_role(
 
 @router.get("/ip-blocklist")
 async def ip_blocklist_page(request: Request, db: AsyncSession = Depends(get_db)):
-    admin = await _require_admin(request)
+    admin = await _require_admin(request, db)
     if not admin:
         return HTMLResponse("Access denied", status_code=403)
 
@@ -128,7 +139,7 @@ async def add_ip_block(
     reason: str = Form(""),
     db: AsyncSession = Depends(get_db),
 ):
-    admin = await _require_admin(request)
+    admin = await _require_admin(request, db)
     if not admin:
         return HTMLResponse("Access denied", status_code=403)
 
@@ -142,7 +153,7 @@ async def remove_ip_block(
     ip_address: str = Form(...),
     db: AsyncSession = Depends(get_db),
 ):
-    admin = await _require_admin(request)
+    admin = await _require_admin(request, db)
     if not admin:
         return HTMLResponse("Access denied", status_code=403)
 
@@ -159,7 +170,7 @@ async def access_log_page(
     page: int = 1,
     db: AsyncSession = Depends(get_db),
 ):
-    admin = await _require_admin(request)
+    admin = await _require_admin(request, db)
     if not admin:
         return HTMLResponse("Access denied", status_code=403)
 
