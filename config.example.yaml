@@ -22,7 +22,8 @@ oauth:
 # Each app that gatekeeper protects
 apps:
 
-  # Example 1: Simple app, no API key requirement
+  # Example 1: Simple app with nag screen
+  # Sessions 1-5: pass through, 6-10: nag screen, 11+: must sign in
   myapp-prod:
     name: "My App (Production)"
     domains:
@@ -30,7 +31,10 @@ apps:
     protected_paths:
       - "/admin/*"
     paywall:
+      nag_after_sessions: 5
       max_sessions_per_week: 10
+      # Optional: custom nag page HTML (omit to use gatekeeper's default)
+      # nag_html_file: "/home/jonnosan/myapp/nag.html"
     roles:
       - "user"
       - "admin"

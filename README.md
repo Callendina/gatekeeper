@@ -64,20 +64,20 @@ python create_admin.py your@email.com
 
 ## Caddy Configuration
 
-Add `forward_auth` to each app's Caddy config:
+Add `forward_auth` to each app's Caddy config. The `/_auth/*` handler **must** come first:
 
 ```caddyfile
 myapp.example.com {
-    forward_auth localhost:9100 {
-        uri /_auth/verify
-        copy_headers X-Gatekeeper-User X-Gatekeeper-Role X-Gatekeeper-System-Admin
-    }
-
     handle /_auth/* {
         reverse_proxy localhost:9100
     }
 
     handle {
+        forward_auth localhost:9100 {
+            uri /_auth/verify
+            copy_headers X-Gatekeeper-User X-Gatekeeper-Role X-Gatekeeper-System-Admin
+        }
+
         reverse_proxy localhost:8001
     }
 }

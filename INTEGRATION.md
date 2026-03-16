@@ -176,17 +176,17 @@ For apps using API keys, Caddy must forward the client's `X-API-Key` header to g
 
 ```caddyfile
 webapp.example.com {
-    forward_auth localhost:9100 {
-        uri /_auth/verify
-        header_up X-Forwarded-API-Key {header.X-API-Key}
-        copy_headers X-Gatekeeper-User X-Gatekeeper-Role X-Gatekeeper-System-Admin
-    }
-
     handle /_auth/* {
         reverse_proxy localhost:9100
     }
 
     handle {
+        forward_auth localhost:9100 {
+            uri /_auth/verify
+            header_up X-Forwarded-API-Key {header.X-API-Key}
+            copy_headers X-Gatekeeper-User X-Gatekeeper-Role X-Gatekeeper-System-Admin
+        }
+
         reverse_proxy localhost:YOUR_APP_PORT
     }
 }
@@ -235,32 +235,35 @@ These are served by gatekeeper through Caddy. You can link to them from your app
 | `/_auth/logout?app=SLUG` | Logout (clears session, redirects to app root) |
 | `/_auth/oauth/google?app=SLUG&next=/path` | Direct Google OAuth login |
 | `/_auth/oauth/github?app=SLUG&next=/path` | Direct GitHub OAuth login |
+| `/_auth/nag?app=SLUG&next=/path` | Paywall nag page (auto-redirected to by gatekeeper) |
+| `/_auth/nag/dismiss?next=/path` | Dismiss nag for 1 hour and continue |
 
 Replace `SLUG` with your app's slug as defined in gatekeeper's `config.yaml`.
 
 ## Caddy Configuration
 
-Your app's Caddy config should look like this:
+Your app's Caddy config should look like this. **IMPORTANT**: the `handle /_auth/*` block MUST come first — auth UI routes must bypass `forward_auth`, otherwise users can't reach the login page.
 
 ```caddyfile
 myapp.example.com {
-    # Auth check on every request
-    forward_auth localhost:9100 {
-        uri /_auth/verify
-        copy_headers X-Gatekeeper-User X-Gatekeeper-Role X-Gatekeeper-System-Admin
-    }
-
-    # Auth UI routes go to gatekeeper
+    # Auth UI routes go directly to gatekeeper (no forward_auth)
     handle /_auth/* {
         reverse_proxy localhost:9100
     }
 
-    # App routes go to your app
+    # Everything else: auth check, then proxy to app
     handle {
+        forward_auth localhost:9100 {
+            uri /_auth/verify
+            copy_headers X-Gatekeeper-User X-Gatekeeper-Role X-Gatekeeper-System-Admin
+        }
+
         reverse_proxy localhost:YOUR_APP_PORT
     }
 }
 ```
+
+For apps with API key support, also add `header_up X-Forwarded-API-Key {header.X-API-Key}` inside the `forward_auth` block.
 
 ## Migration Checklist
 
