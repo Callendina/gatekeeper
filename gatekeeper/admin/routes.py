@@ -1,4 +1,5 @@
 """Admin routes for managing users, IP blocklist, and viewing access logs."""
+import datetime
 from fastapi import APIRouter, Request, Depends, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -7,8 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from gatekeeper.database import get_db
 from gatekeeper.config import GatekeeperConfig
-from gatekeeper.models import User, UserAppRole, IPBlocklist, AccessLog
+from gatekeeper.models import User, UserAppRole, IPBlocklist, AccessLog, Session
 from gatekeeper.middleware.ip_block import block_ip, unblock_ip
+from gatekeeper.auth.sessions import validate_session
 
 from pathlib import Path
 
@@ -23,30 +25,53 @@ def init_admin_routes(config: GatekeeperConfig):
 
 
 async def _require_admin(request: Request, db: AsyncSession):
-    """Check that the request is from a system admin by validating the session cookie."""
-    from gatekeeper.auth.sessions import validate_session
-
+    """Check that the request is from a system admin by validating the session cookie.
+    Returns the admin email, or a RedirectResponse to the login page."""
     session_token = request.cookies.get("gk_session")
-    if not session_token:
-        return None
+    if session_token:
+        # Try all configured app slugs
+        for app_slug in _config.apps:
+            session, user, role = await validate_session(db, session_token, app_slug)
+            if user and user.is_system_admin:
+                return user.email
 
-    # Admin routes are under /_auth/ which bypasses forward_auth,
-    # so we can't rely on X-Gatekeeper headers. Check the session
-    # directly. We try all configured app slugs since the admin
-    # may be accessing from any app domain.
-    for app_slug in _config.apps:
-        session, user, role = await validate_session(db, session_token, app_slug)
-        if user and user.is_system_admin:
-            return user.email
+        # Also check sessions not scoped to any app (e.g. from the admin domain)
+        stmt = select(Session).where(
+            Session.token == session_token,
+            Session.expires_at > datetime.datetime.utcnow(),
+        )
+        result = await db.execute(stmt)
+        session = result.scalar_one_or_none()
+        if session and session.user_id:
+            user_stmt = select(User).where(User.id == session.user_id)
+            user_result = await db.execute(user_stmt)
+            user = user_result.scalar_one_or_none()
+            if user and user.is_system_admin:
+                return user.email
 
-    return None
+    # Not authenticated or not admin — redirect to login
+    app_slug = next(iter(_config.apps), "")
+    host = request.headers.get("host", "")
+    app_for_host = _config.app_for_domain(host)
+    if app_for_host:
+        app_slug = app_for_host.slug
+    return RedirectResponse(
+        url=f"/_auth/login?app={app_slug}&next=/_auth/admin", status_code=302
+    )
+
+
+def _check_admin(result):
+    """Returns (email, None) if admin, or (None, response) if redirect."""
+    if isinstance(result, str):
+        return result, None
+    return None, result
 
 
 @router.get("")
 async def admin_dashboard(request: Request, db: AsyncSession = Depends(get_db)):
-    admin = await _require_admin(request, db)
-    if not admin:
-        return HTMLResponse("Access denied", status_code=403)
+    admin, redirect = _check_admin(await _require_admin(request, db))
+    if redirect:
+        return redirect
 
     user_count = await db.scalar(select(func.count(User.id)))
     blocked_count = await db.scalar(select(func.count(IPBlocklist.id)))
@@ -62,9 +87,9 @@ async def admin_dashboard(request: Request, db: AsyncSession = Depends(get_db)):
 
 @router.get("/users")
 async def list_users(request: Request, db: AsyncSession = Depends(get_db)):
-    admin = await _require_admin(request, db)
-    if not admin:
-        return HTMLResponse("Access denied", status_code=403)
+    admin, redirect = _check_admin(await _require_admin(request, db))
+    if redirect:
+        return redirect
 
     stmt = select(User).order_by(User.created_at.desc())
     result = await db.execute(stmt)
@@ -94,9 +119,9 @@ async def update_user_role(
     role: str = Form(...),
     db: AsyncSession = Depends(get_db),
 ):
-    admin = await _require_admin(request, db)
-    if not admin:
-        return HTMLResponse("Access denied", status_code=403)
+    admin, redirect = _check_admin(await _require_admin(request, db))
+    if redirect:
+        return redirect
 
     stmt = select(UserAppRole).where(
         UserAppRole.user_id == user_id,
@@ -117,9 +142,9 @@ async def update_user_role(
 
 @router.get("/ip-blocklist")
 async def ip_blocklist_page(request: Request, db: AsyncSession = Depends(get_db)):
-    admin = await _require_admin(request, db)
-    if not admin:
-        return HTMLResponse("Access denied", status_code=403)
+    admin, redirect = _check_admin(await _require_admin(request, db))
+    if redirect:
+        return redirect
 
     stmt = select(IPBlocklist).order_by(IPBlocklist.blocked_at.desc())
     result = await db.execute(stmt)
@@ -139,9 +164,9 @@ async def add_ip_block(
     reason: str = Form(""),
     db: AsyncSession = Depends(get_db),
 ):
-    admin = await _require_admin(request, db)
-    if not admin:
-        return HTMLResponse("Access denied", status_code=403)
+    admin, redirect = _check_admin(await _require_admin(request, db))
+    if redirect:
+        return redirect
 
     await block_ip(db, ip_address, reason=reason, blocked_by=admin)
     return RedirectResponse(url="/_auth/admin/ip-blocklist", status_code=302)
@@ -153,9 +178,9 @@ async def remove_ip_block(
     ip_address: str = Form(...),
     db: AsyncSession = Depends(get_db),
 ):
-    admin = await _require_admin(request, db)
-    if not admin:
-        return HTMLResponse("Access denied", status_code=403)
+    admin, redirect = _check_admin(await _require_admin(request, db))
+    if redirect:
+        return redirect
 
     await unblock_ip(db, ip_address)
     return RedirectResponse(url="/_auth/admin/ip-blocklist", status_code=302)
@@ -170,9 +195,9 @@ async def access_log_page(
     page: int = 1,
     db: AsyncSession = Depends(get_db),
 ):
-    admin = await _require_admin(request, db)
-    if not admin:
-        return HTMLResponse("Access denied", status_code=403)
+    admin, redirect = _check_admin(await _require_admin(request, db))
+    if redirect:
+        return redirect
 
     per_page = 100
     stmt = select(AccessLog).order_by(AccessLog.timestamp.desc())

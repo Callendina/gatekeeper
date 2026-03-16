@@ -59,6 +59,12 @@ app.include_router(api_key_router)
 app.include_router(admin_router)
 
 
+@app.get("/")
+async def root():
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/_auth/admin")
+
+
 @app.get("/_auth/health")
 async def health():
     return {"status": "ok"}
