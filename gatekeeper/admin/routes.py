@@ -82,6 +82,7 @@ async def admin_dashboard(request: Request, db: AsyncSession = Depends(get_db)):
         "blocked_count": blocked_count,
         "apps": _config.apps,
         "admin_email": admin,
+        "environment": _config.environment,
     })
 
 
@@ -108,6 +109,7 @@ async def list_users(request: Request, db: AsyncSession = Depends(get_db)):
         "user_roles": user_roles,
         "apps": _config.apps,
         "admin_email": admin,
+        "environment": _config.environment,
     })
 
 
@@ -154,6 +156,7 @@ async def ip_blocklist_page(request: Request, db: AsyncSession = Depends(get_db)
         "request": request,
         "blocked_ips": blocked,
         "admin_email": admin,
+        "environment": _config.environment,
     })
 
 
@@ -222,4 +225,5 @@ async def access_log_page(
         "page": page,
         "apps": _config.apps,
         "admin_email": admin,
+        "environment": _config.environment,
     })

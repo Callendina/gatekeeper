@@ -71,6 +71,7 @@ class GatekeeperConfig:
     host: str = "127.0.0.1"
     port: int = 9100
     secret_key: str = ""
+    environment: str = ""  # e.g. "STAGING" — shown as a banner in admin UI
     database_path: str = "gatekeeper.db"
     google_client_id: str = ""
     google_client_secret: str = ""
@@ -133,6 +134,7 @@ def load_config(path: str = "config.yaml") -> GatekeeperConfig:
         host=server.get("host", "127.0.0.1"),
         port=server.get("port", 9100),
         secret_key=server.get("secret_key", ""),
+        environment=server.get("environment", ""),
         database_path=db.get("path", "gatekeeper.db"),
         google_client_id=oauth_google.get("client_id", ""),
         google_client_secret=oauth_google.get("client_secret", ""),
