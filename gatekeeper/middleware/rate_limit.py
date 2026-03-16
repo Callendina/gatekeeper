@@ -8,7 +8,7 @@ from gatekeeper.config import RateLimitConfig
 _request_log: dict[str, list[float]] = defaultdict(list)
 
 
-def check_rate_limit(ip: str, config: RateLimitConfig) -> bool:
+def check_rate_limit(ip: str, config: RateLimitConfig, authenticated: bool = False) -> bool:
     """Returns True if request is allowed, False if rate limited."""
     now = time.time()
     window = 60.0  # 1 minute
@@ -18,7 +18,11 @@ def check_rate_limit(ip: str, config: RateLimitConfig) -> bool:
     cutoff = now - window
     _request_log[ip] = [t for t in timestamps if t > cutoff]
 
-    if len(_request_log[ip]) >= config.requests_per_minute:
+    limit = config.requests_per_minute
+    if authenticated and config.authenticated_requests_per_minute > 0:
+        limit = config.authenticated_requests_per_minute
+
+    if len(_request_log[ip]) >= limit:
         return False
 
     _request_log[ip].append(now)

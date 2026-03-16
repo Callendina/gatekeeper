@@ -63,12 +63,18 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
         await _log(db, ip, app.slug, path, method, None, "blocked")
         return Response(status_code=403, content="Blocked")
 
-    # 2. Check rate limit
-    if not check_rate_limit(ip, _config.rate_limit):
+    # 2. Validate session early (needed for rate limit and later checks)
+    session_token = request.cookies.get("gk_session")
+    session, user, role = None, None, None
+    if session_token:
+        session, user, role = await validate_session(db, session_token, app.slug)
+
+    # 3. Check rate limit (authenticated users may get a higher limit)
+    if not check_rate_limit(ip, _config.rate_limit, authenticated=user is not None):
         await _log(db, ip, app.slug, path, method, None, "rate_limited")
         return Response(status_code=429, content="Rate limited")
 
-    # 3. Check if this is an API path requiring a key
+    # 4. Check if this is an API path requiring a key
     is_api_path = app.api_access.enabled and _path_matches_any(path, app.api_access.paths)
 
     if is_api_path:
@@ -107,13 +113,6 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
             await _log(db, ip, app.slug, path, method, None, "allowed")
         return response
 
-    # 4. Non-API paths: check session
-    session_token = request.cookies.get("gk_session")
-    session, user, role = None, None, None
-
-    if session_token:
-        session, user, role = await validate_session(db, session_token, app.slug)
-
     # 5. If path requires auth and user is not authenticated
     is_protected = _path_matches_any(path, app.protected_paths)
 
@@ -125,7 +124,7 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
             headers={"Location": login_url},
         )
 
-    # 6. Check paywall for anonymous users
+    # 6. Check paywall for anonymous users for anonymous users
     nag_dismissed = request.cookies.get("gk_nag_dismissed") == "1"
 
     if user is None and app.paywall.enabled:

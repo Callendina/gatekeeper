@@ -62,6 +62,7 @@ class AppConfig:
 @dataclass
 class RateLimitConfig:
     requests_per_minute: int = 120
+    authenticated_requests_per_minute: int = 0  # 0 = use requests_per_minute
     burst: int = 30
 
 
@@ -140,6 +141,7 @@ def load_config(path: str = "config.yaml") -> GatekeeperConfig:
         apps=apps,
         rate_limit=RateLimitConfig(
             requests_per_minute=rl.get("requests_per_minute", 120),
+            authenticated_requests_per_minute=rl.get("authenticated_requests_per_minute", 0),
             burst=rl.get("burst", 30),
         ),
     )
