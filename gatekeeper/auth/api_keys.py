@@ -145,40 +145,15 @@ async def issue_temp_key(
             )
         return response
 
-    # If the user is authenticated, just issue a registered key instead
-    if user is not None:
-        # Reuse the registered key endpoint logic
-        await db.execute(
-            delete(APIKey).where(
-                APIKey.user_id == user.id,
-                APIKey.app_slug == app.slug,
-                APIKey.key_type == "registered",
-            )
-        )
-        key = secrets.token_urlsafe(32)
-        expires_at = datetime.datetime.utcnow() + datetime.timedelta(
-            days=app.api_access.registered_key_duration_days
-        )
-        api_key = APIKey(
-            key=key, app_slug=app.slug, user_id=user.id,
-            key_type="registered", ip_address=ip, expires_at=expires_at,
-        )
-        db.add(api_key)
-        await db.commit()
-        return _maybe_set_cookie(JSONResponse({
-            "api_key": key,
-            "expires_at": expires_at.isoformat() + "Z",
-            "type": "registered",
-        }))
-
-    # Anonymous user: issue a short-lived temp key
+    # Always issue a temp key (attach user_id if authenticated)
     key = secrets.token_urlsafe(32)
     expires_at = datetime.datetime.utcnow() + datetime.timedelta(
         minutes=app.api_access.temp_key_duration_minutes
     )
 
     api_key = APIKey(
-        key=key, app_slug=app.slug, user_id=None,
+        key=key, app_slug=app.slug,
+        user_id=user.id if user else None,
         key_type="temp", ip_address=ip, expires_at=expires_at,
     )
     db.add(api_key)

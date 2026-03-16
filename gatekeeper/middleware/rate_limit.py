@@ -1,4 +1,4 @@
-"""In-memory sliding window rate limiter per IP."""
+"""In-memory sliding window rate limiter per IP and per API key."""
 import time
 from collections import defaultdict
 from gatekeeper.config import RateLimitConfig
@@ -6,6 +6,9 @@ from gatekeeper.config import RateLimitConfig
 
 # Store timestamps of recent requests per IP
 _request_log: dict[str, list[float]] = defaultdict(list)
+
+# Separate tracker for per-API-key rate limiting
+_api_key_log: dict[str, list[float]] = defaultdict(list)
 
 
 def check_rate_limit(ip: str, config: RateLimitConfig, authenticated: bool = False) -> bool:
@@ -29,10 +32,30 @@ def check_rate_limit(ip: str, config: RateLimitConfig, authenticated: bool = Fal
     return True
 
 
+def check_api_key_rate_limit(api_key: str, limit_per_minute: int) -> bool:
+    """Per-API-key rate limit. Returns True if allowed, False if rate limited."""
+    now = time.time()
+    window = 60.0
+
+    cutoff = now - window
+    _api_key_log[api_key] = [t for t in _api_key_log[api_key] if t > cutoff]
+
+    if len(_api_key_log[api_key]) >= limit_per_minute:
+        return False
+
+    _api_key_log[api_key].append(now)
+    return True
+
+
 def cleanup_old_entries():
-    """Periodically clean up IPs that haven't been seen recently."""
+    """Periodically clean up stale entries from both trackers."""
     now = time.time()
     cutoff = now - 300  # 5 minutes
-    stale = [ip for ip, ts in _request_log.items() if not ts or ts[-1] < cutoff]
-    for ip in stale:
-        del _request_log[ip]
+
+    stale = [k for k, ts in _request_log.items() if not ts or ts[-1] < cutoff]
+    for k in stale:
+        del _request_log[k]
+
+    stale = [k for k, ts in _api_key_log.items() if not ts or ts[-1] < cutoff]
+    for k in stale:
+        del _api_key_log[k]

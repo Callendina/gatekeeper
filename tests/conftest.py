@@ -11,7 +11,7 @@ from gatekeeper.auth.forward_auth import init_forward_auth
 from gatekeeper.auth.login import init_login_routes
 from gatekeeper.auth.api_keys import init_api_key_routes
 from gatekeeper.admin.routes import init_admin_routes
-from gatekeeper.middleware.rate_limit import _request_log
+from gatekeeper.middleware.rate_limit import _request_log, _api_key_log
 from gatekeeper.middleware.ip_block import _blocked_ips
 
 TEST_DB = "test_gatekeeper.db"
@@ -80,6 +80,7 @@ async def app(config):
 
     # Cleanup: dispose engine so Windows releases file lock
     _request_log.clear()
+    _api_key_log.clear()
     _blocked_ips.clear()
     if db_module.engine:
         await db_module.engine.dispose()

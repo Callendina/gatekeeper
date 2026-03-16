@@ -18,7 +18,7 @@ from gatekeeper.database import get_db
 from gatekeeper.config import GatekeeperConfig, AppConfig
 from gatekeeper.auth.sessions import validate_session, create_session
 from gatekeeper.middleware.ip_block import is_ip_blocked
-from gatekeeper.middleware.rate_limit import check_rate_limit
+from gatekeeper.middleware.rate_limit import check_rate_limit, check_api_key_rate_limit
 from gatekeeper.middleware.paywall import check_paywall, record_new_session, PaywallResult
 from gatekeeper.auth.api_keys import validate_api_key
 from gatekeeper.models import AccessLog
@@ -92,8 +92,21 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
             await _log(db, ip, app.slug, path, method, None, "api_key_invalid")
             return Response(status_code=401, content="Invalid or expired API key")
 
-        # Valid API key — check paywall for temp keys (anonymous usage)
-        if api_key_obj.key_type == "temp" and app.paywall.enabled:
+        # Per-key rate limit
+        limits = app.api_access.api_rate_limits
+        if api_key_obj.key_type == "registered":
+            key_limit = limits.registered_per_minute
+        elif api_key_obj.user_id is not None:
+            key_limit = limits.temp_authenticated_per_minute
+        else:
+            key_limit = limits.temp_anonymous_per_minute
+
+        if not check_api_key_rate_limit(api_key_obj.key, key_limit):
+            await _log(db, ip, app.slug, path, method, None, "api_key_rate_limited")
+            return Response(status_code=429, content="API key rate limit exceeded")
+
+        # Check paywall for temp keys (anonymous usage)
+        if api_key_obj.key_type == "temp" and api_key_obj.user_id is None and app.paywall.enabled:
             paywall_ok = await check_paywall(db, ip, app, session_token=None)
             if not paywall_ok:
                 await _log(db, ip, app.slug, path, method, None, "paywall")

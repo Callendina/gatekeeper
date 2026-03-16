@@ -30,6 +30,13 @@ class PaywallConfig:
 
 
 @dataclass
+class APIRateLimits:
+    temp_anonymous_per_minute: int = 500
+    temp_authenticated_per_minute: int = 1500
+    registered_per_minute: int = 100
+
+
+@dataclass
 class APIAccessConfig:
     # "open" = no key needed, IP tracking only
     # "key_required" = API paths need an X-API-Key header
@@ -40,6 +47,8 @@ class APIAccessConfig:
     temp_key_duration_minutes: int = 30
     # How long a registered user's key lasts
     registered_key_duration_days: int = 365
+    # Per-key rate limits for API paths
+    api_rate_limits: APIRateLimits = field(default_factory=APIRateLimits)
 
     @property
     def enabled(self) -> bool:
@@ -92,6 +101,16 @@ class GatekeeperConfig:
         return None
 
 
+def _parse_api_rate_limits(raw: dict) -> APIRateLimits:
+    if not raw:
+        return APIRateLimits()
+    return APIRateLimits(
+        temp_anonymous_per_minute=raw.get("temp_anonymous_per_minute", 500),
+        temp_authenticated_per_minute=raw.get("temp_authenticated_per_minute", 1500),
+        registered_per_minute=raw.get("registered_per_minute", 100),
+    )
+
+
 def _parse_app_config(slug: str, app_raw: dict) -> AppConfig:
     paywall_raw = app_raw.get("paywall", {})
     paywall = PaywallConfig(
@@ -106,6 +125,7 @@ def _parse_app_config(slug: str, app_raw: dict) -> AppConfig:
         paths=api_raw.get("paths", []),
         temp_key_duration_minutes=api_raw.get("temp_key_duration_minutes", 30),
         registered_key_duration_days=api_raw.get("registered_key_duration_days", 365),
+        api_rate_limits=_parse_api_rate_limits(api_raw.get("api_rate_limits", {})),
     )
     return AppConfig(
         slug=slug,
