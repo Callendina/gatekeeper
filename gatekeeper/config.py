@@ -7,10 +7,18 @@ from dataclasses import dataclass, field
 class PaywallConfig:
     max_sessions_per_week: int = 0
     max_api_calls_per_hour: int = 0
+    # Optional nag threshold: when session count exceeds this but is below
+    # max_sessions_per_week, show a dismissable nag screen instead of blocking.
+    # Set to 0 to disable nag (goes straight from allowed to blocked).
+    nag_after_sessions: int = 0
 
     @property
     def enabled(self) -> bool:
         return self.max_sessions_per_week > 0 or self.max_api_calls_per_hour > 0
+
+    @property
+    def nag_enabled(self) -> bool:
+        return self.nag_after_sessions > 0 and self.nag_after_sessions < self.max_sessions_per_week
 
 
 @dataclass
@@ -88,6 +96,7 @@ def load_config(path: str = "config.yaml") -> GatekeeperConfig:
         paywall = PaywallConfig(
             max_sessions_per_week=paywall_raw.get("max_sessions_per_week", 0),
             max_api_calls_per_hour=paywall_raw.get("max_api_calls_per_hour", 0),
+            nag_after_sessions=paywall_raw.get("nag_after_sessions", 0),
         )
         api_raw = app_raw.get("api_access", {})
         api_access = APIAccessConfig(

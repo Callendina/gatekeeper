@@ -44,6 +44,32 @@ async def login_page(request: Request, app: str = "", next: str = "/"):
     })
 
 
+@router.get("/nag")
+async def nag_page(request: Request, app: str = "", next: str = "/"):
+    app_config = _config.apps.get(app)
+    app_name = app_config.name if app_config else "Application"
+    return templates.TemplateResponse("auth/nag.html", {
+        "request": request,
+        "app": app,
+        "app_name": app_name,
+        "next": next,
+        "has_google": bool(_config.google_client_id),
+        "has_github": bool(_config.github_client_id),
+    })
+
+
+@router.get("/nag/dismiss")
+async def nag_dismiss(request: Request, next: str = "/"):
+    """Set a cookie to suppress the nag for 1 hour and redirect to the original page."""
+    response = RedirectResponse(url=next, status_code=302)
+    response.set_cookie(
+        "gk_nag_dismissed", "1",
+        httponly=True, secure=True, samesite="lax",
+        max_age=3600,  # 1 hour
+    )
+    return response
+
+
 # --- Google OAuth ---
 
 @router.get("/oauth/google")

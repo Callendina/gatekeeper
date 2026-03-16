@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Create an Account? - {{ app_name }}{% endblock %}
+{% block body %}
+<div class="container">
+    <h1>Enjoying {{ app_name }}?</h1>
+    <p style="color: #666; margin-bottom: 1.5rem;">Create a free account to keep using it without interruptions.</p>
+
+    {% if has_google %}
+    <a href="/_auth/oauth/google?app={{ app }}&next={{ next }}" class="btn btn-google">Sign in with Google</a>
+    {% endif %}
+
+    {% if has_google and has_github %}
+    <div class="divider">or</div>
+    {% endif %}
+
+    {% if has_github %}
+    <a href="/_auth/oauth/github?app={{ app }}&next={{ next }}" class="btn btn-github">Sign in with GitHub</a>
+    {% endif %}
+
+    <div class="divider" style="margin-top: 1.5rem;"></div>
+
+    <a href="/_auth/nag/dismiss?next={{ next }}" class="btn btn-skip">Not right now, thanks</a>
+</div>
+{% endblock %}
+
+{% block extra_head %}
+<style>
+    .btn-github { background: #24292e; color: white; margin-top: 0.5rem; }
+    .btn-github:hover { background: #1a1e22; }
+    .btn-skip { background: transparent; color: #999; border: 1px solid #ddd; margin-top: 0.5rem; font-size: 0.9rem; }
+    .btn-skip:hover { background: #f8f8f8; color: #666; }
+</style>
+{% endblock %}

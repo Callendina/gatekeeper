@@ -19,7 +19,7 @@ from gatekeeper.config import GatekeeperConfig, AppConfig
 from gatekeeper.auth.sessions import validate_session, create_session
 from gatekeeper.middleware.ip_block import is_ip_blocked
 from gatekeeper.middleware.rate_limit import check_rate_limit
-from gatekeeper.middleware.paywall import check_paywall, record_new_session
+from gatekeeper.middleware.paywall import check_paywall, record_new_session, PaywallResult
 from gatekeeper.auth.api_keys import validate_api_key
 from gatekeeper.models import AccessLog
 
@@ -126,27 +126,31 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
         )
 
     # 6. Check paywall for anonymous users
+    nag_dismissed = request.cookies.get("gk_nag_dismissed") == "1"
+
     if user is None and app.paywall.enabled:
-        paywall_ok = await check_paywall(db, ip, app, session_token=session_token)
-        if not paywall_ok:
+        pw_result = await check_paywall(db, ip, app, session_token=session_token)
+        if pw_result == PaywallResult.BLOCKED:
             await _log(db, ip, app.slug, path, method, None, "paywall")
             login_url = f"/_auth/login?app={app.slug}&next={path}"
-            return Response(
-                status_code=302,
-                headers={"Location": login_url},
-            )
+            return Response(status_code=302, headers={"Location": login_url})
+        if pw_result == PaywallResult.NAG and not nag_dismissed:
+            await _log(db, ip, app.slug, path, method, None, "paywall_nag")
+            nag_url = f"/_auth/nag?app={app.slug}&next={path}"
+            return Response(status_code=302, headers={"Location": nag_url})
 
     # 7. Create anonymous session if none exists (for tracking)
     if session is None and app.paywall.enabled:
         # Record the new session for paywall counting
-        within_quota = await record_new_session(db, ip, app)
-        if not within_quota:
+        pw_result = await record_new_session(db, ip, app)
+        if pw_result == PaywallResult.BLOCKED:
             await _log(db, ip, app.slug, path, method, None, "paywall")
             login_url = f"/_auth/login?app={app.slug}&next={path}"
-            return Response(
-                status_code=302,
-                headers={"Location": login_url},
-            )
+            return Response(status_code=302, headers={"Location": login_url})
+        if pw_result == PaywallResult.NAG and not nag_dismissed:
+            await _log(db, ip, app.slug, path, method, None, "paywall_nag")
+            nag_url = f"/_auth/nag?app={app.slug}&next={path}"
+            return Response(status_code=302, headers={"Location": nag_url})
 
         token = await create_session(db, None, app.slug, ip)
         response = Response(status_code=200)
