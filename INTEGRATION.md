@@ -197,13 +197,13 @@ webapp.example.com {
 | Endpoint | Method | Requires | Returns |
 |----------|--------|----------|---------|
 | `/_auth/api-key` | POST | Authenticated session cookie | Long-lived key (JSON) |
-| `/_auth/api-key/temp` | POST | Any valid session cookie (even anonymous) | Short-lived key (JSON) |
+| `/_auth/api-key/temp` | POST | Session cookie (auto-creates one if none exists) | Short-lived key (JSON) |
 
 Response format:
 ```json
 {
     "api_key": "abc123...",
-    "expires_at": "2026-03-16T12:00:00",
+    "expires_at": "2026-03-16T12:00:00Z",
     "type": "registered",
     "duration_minutes": 30
 }
@@ -267,7 +267,7 @@ For apps with API key support, also add `header_up X-Forwarded-API-Key {header.X
 
 ## Migration Checklist
 
-- [ ] Add your app to gatekeeper's `config.yaml` with appropriate slug, domains, and settings
+- [ ] Add your app config: either in gatekeeper's `config.yaml` under `apps:`, or as a fragment at `config.d/<app-slug>.yaml` (see `config.d.example/` for format)
 - [ ] Update your Caddyfile to use `forward_auth` (see above)
 - [ ] Add a helper function to read `X-Gatekeeper-User` and `X-Gatekeeper-Role` headers
 - [ ] Replace all auth checks in your routes with header-based checks

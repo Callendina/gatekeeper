@@ -26,9 +26,9 @@ When gatekeeper returns 200, it sets these headers that Caddy copies to the upst
 
 ### Check order (in forward_auth verify endpoint)
 1. IP blocklist (403 if blocked)
-2. Rate limit (429 if exceeded, per-IP, in-memory)
-3. API key check (for apps with `api_access.mode: "key_required"`)
-4. Session validation (cookie-based)
+2. Session validation (cookie-based, done early for rate limit)
+3. Rate limit (429 if exceeded, per-IP, in-memory; authenticated users can get a higher limit)
+4. API key check (for apps with `api_access.mode: "key_required"`)
 5. Protected path check (302 redirect to login if auth required)
 6. Soft paywall — three states:
    - **allowed**: within free quota, pass through
@@ -59,13 +59,14 @@ myapp.example.com {
 - **authlib** for OAuth (Google, GitHub)
 - **httpx** for OAuth provider API calls
 - **Jinja2** templates for login/nag/admin UI
+- **ProxyHeadersMiddleware** to trust X-Forwarded-Proto/Host from Caddy (so OAuth callback URLs are generated correctly)
 
 ## Project structure
 
 ```
 gatekeeper/
   app.py              - FastAPI app setup, lifespan, routers
-  config.py           - YAML config loading
+  config.py           - YAML config loading (main + config.d/ fragments)
   database.py         - SQLAlchemy async engine/session setup
   models.py           - All database models
   auth/
@@ -81,6 +82,8 @@ gatekeeper/
   admin/
     routes.py         - Admin UI routes (users, IP blocklist, access log)
   templates/          - Jinja2 HTML templates
+config.d/             - Per-app config fragments (gitignored)
+config.d.example/     - Example app config fragment
 troll/                - Integration test app
 ```
 
@@ -94,19 +97,52 @@ python run.py
 
 ## Config
 
-See `config.example.yaml`. Each app is identified by a slug and mapped to domain(s). The app slug is the key for all per-app state (users, roles, sessions, paywall counters).
+See `config.example.yaml` for the main config structure. Each app is identified by a slug and mapped to domain(s). The app slug is the key for all per-app state (users, roles, sessions, paywall counters).
 
-### Paywall config
+### config.d/ fragments
+
+Apps can be defined in individual files under `config.d/` instead of (or in addition to) the main config. Each file is named `<app-slug>.yaml` and contains the app config at the top level (not nested under `apps:`). See `config.d.example/myapp-prod.yaml` for the format. Fragments override the main config if the same slug appears in both.
+
+### Per-app config options
 
 ```yaml
+name: "My App"
+domains: ["myapp.example.com"]
+protected_paths: ["/admin/*"]       # paths requiring authentication
+allowed_emails: []                   # restrict sign-in to these emails (empty = anyone)
+login_html_file: ""                  # custom login page HTML (placeholders: {{APP_NAME}}, {{GOOGLE_URL}}, {{GITHUB_URL}})
+default_role: "user"                 # role assigned on first sign-in
+roles: ["user", "admin"]
 paywall:
-  nag_after_sessions: 5      # sessions 1-5: pass through
-  max_sessions_per_week: 10   # sessions 6-10: nag, 11+: blocked
-  nag_html_file: ""           # optional: path to custom nag page HTML
-  max_api_calls_per_hour: 0   # for API-only apps (0 = use session tracking)
+  nag_after_sessions: 5             # sessions before nag screen (0 = no nag)
+  max_sessions_per_week: 10          # hard limit (0 = no paywall)
+  nag_html_file: ""                  # custom nag page HTML (placeholders: {{APP_NAME}}, {{LOGIN_GOOGLE_URL}}, {{LOGIN_GITHUB_URL}}, {{DISMISS_URL}})
+  max_api_calls_per_hour: 0          # for API-only apps (0 = use session tracking)
+api_access:
+  mode: "open"                       # "open" or "key_required"
+  paths: ["/api/*"]
+  temp_key_duration_minutes: 30
+  registered_key_duration_days: 365
 ```
 
-If `nag_html_file` is set, gatekeeper serves that file as the nag page. The HTML can use these placeholders: `{{LOGIN_GOOGLE_URL}}`, `{{LOGIN_GITHUB_URL}}`, `{{DISMISS_URL}}`, `{{APP_NAME}}`. If not set, gatekeeper's default nag template is used.
+### Rate limit config
+
+```yaml
+rate_limit:
+  requests_per_minute: 120
+  authenticated_requests_per_minute: 0   # higher limit for logged-in users (0 = use default)
+  burst: 30
+```
+
+### Server config
+
+```yaml
+server:
+  host: "127.0.0.1"
+  port: 9100
+  secret_key: "..."
+  environment: "STAGING"              # optional: shown as banner in admin UI
+```
 
 ## Key decisions
 
@@ -115,8 +151,9 @@ If `nag_html_file` is set, gatekeeper serves that file as the nag page. The HTML
 - **Apps identify requests by reading headers**, not by doing their own auth. Apps should trust `X-Gatekeeper-User` and `X-Gatekeeper-Role` headers (they can only come from gatekeeper via Caddy's forward_auth).
 - **Session cookies** are named `gk_session`, set httponly/secure/samesite=lax.
 - **Nag dismissal cookie** is `gk_nag_dismissed`, lasts 1 hour.
-- **Admin UI** is at `/_auth/admin` on any app domain. Only accessible to users with `is_system_admin=True`.
+- **Admin UI** is at `/_auth/admin` on any app domain (or a dedicated gatekeeper domain). Only accessible to users with `is_system_admin=True`. Admin auth validates the session cookie directly (not via headers) since `/_auth/*` bypasses forward_auth.
 - **Access log** is stored in SQLite — this is the log admins review to block IPs. It is NOT a replacement for Caddy's access log.
+- **OAuth callbacks redirect to origin host** — if a user starts login from `gatekeeper.callendina.com`, they're redirected back there after OAuth, not to the app's domain.
 
 ## Creating the first admin user
 

@@ -6,10 +6,14 @@ Centralized authentication, authorization, rate limiting, and soft paywall servi
 
 - **Unified authentication** — OAuth-only (Google and GitHub), shared across all apps
 - **Per-app roles** — `user`, `admin`, `guest` (configurable per app)
-- **Soft paywall** — let anonymous users access apps freely up to a limit (sessions/week or API calls/hour), then prompt registration
+- **Two-tier soft paywall** — nag screen (dismissable) then hard block after configurable session limits
+- **Custom login and nag pages** — per-app HTML templates with your own branding
+- **Email whitelist** — restrict sign-in to specific emails per app
+- **API key management** — short-lived temp keys for anonymous frontend users, long-lived keys for registered users
 - **IP blocklist** — manual blocking via admin UI, with one-click block from access logs
-- **Rate limiting** — per-IP sliding window rate limiter
+- **Rate limiting** — per-IP sliding window, with separate limits for anonymous vs authenticated users
 - **Admin dashboard** — manage users, view access logs, block IPs
+- **Per-app config fragments** — define apps in `config.d/<slug>.yaml` files
 
 ## How It Works
 
@@ -17,18 +21,19 @@ Centralized authentication, authorization, rate limiting, and soft paywall servi
 Internet -> Caddy (HTTPS) -> forward_auth -> Gatekeeper (localhost:9100)
                                                 |
                                           200 + headers -> Caddy proxies to app
-                                          401 -> redirect to login
-                                          403 -> blocked or paywall
+                                          302 -> redirect to login or nag page
+                                          403 -> IP blocked
                                           429 -> rate limited
 ```
 
 Every request passes through gatekeeper before reaching your app. Gatekeeper checks (in order):
 
 1. IP blocklist
-2. Rate limit
-3. Session cookie
-4. Protected path (requires login?)
-5. Soft paywall (anonymous usage limit exceeded?)
+2. Session cookie (validated early for rate limit)
+3. Rate limit (authenticated users can get a higher limit)
+4. API key (for apps with `api_access.mode: "key_required"`)
+5. Protected path (requires login?)
+6. Soft paywall (nag screen or hard block)
 
 If allowed, gatekeeper sets headers that Caddy copies to your app:
 
@@ -48,7 +53,8 @@ pip install -r requirements.txt
 
 # Configure
 cp config.example.yaml config.yaml
-# Edit config.yaml with your app domains, Google OAuth credentials, etc.
+# Edit config.yaml with your app domains, OAuth credentials, etc.
+# Or add per-app configs in config.d/<slug>.yaml (see config.d.example/)
 
 # Run
 python run.py
@@ -87,11 +93,14 @@ See [caddy/example.Caddyfile](caddy/example.Caddyfile) for more examples.
 
 ## Configuration
 
-See [config.example.yaml](config.example.yaml). Key sections:
+See [config.example.yaml](config.example.yaml) for the main config. Apps can also be defined as individual files in `config.d/` — see [config.d.example/](config.d.example/) for the fragment format.
 
-- **`apps`** — each app has a slug, domain list, protected paths, paywall settings, and available roles
+Key sections:
+
+- **`apps`** — each app has a slug, domain list, protected paths, paywall, allowed emails, custom pages
 - **`oauth.google`** / **`oauth.github`** — OAuth provider credentials
-- **`rate_limit`** — global per-IP rate limit settings
+- **`rate_limit`** — per-IP limits (separate for anonymous vs authenticated)
+- **`server.environment`** — optional label shown in admin UI (e.g. "STAGING")
 
 ## Deployment
 

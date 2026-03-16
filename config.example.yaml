@@ -1,11 +1,16 @@
 # Gatekeeper configuration
 # Copy to config.yaml and fill in your values
+#
+# Per-app configs can also be placed in config.d/<app-slug>.yaml
+# See config.d.example/ for the fragment format.
 
 server:
   host: "127.0.0.1"
   port: 9100
   # Secret key for signing session cookies - generate with: python -c "import secrets; print(secrets.token_hex(32))"
   secret_key: "CHANGE_ME"
+  # Optional: shown as banner in admin UI (e.g. "STAGING")
+  # environment: "STAGING"
 
 database:
   # SQLite database path (relative to working directory)
@@ -19,7 +24,7 @@ oauth:
     client_id: ""
     client_secret: ""
 
-# Each app that gatekeeper protects
+# Apps can be defined here and/or in config.d/<slug>.yaml files
 apps:
 
   # Example 1: Simple app with nag screen
@@ -35,6 +40,12 @@ apps:
       max_sessions_per_week: 10
       # Optional: custom nag page HTML (omit to use gatekeeper's default)
       # nag_html_file: "/home/jonnosan/myapp/nag.html"
+    # Optional: custom login page HTML
+    # login_html_file: "/home/jonnosan/myapp/login.html"
+    # Optional: restrict sign-in to specific emails (empty = anyone)
+    # allowed_emails:
+    #   - "alice@example.com"
+    #   - "bob@example.com"
     roles:
       - "user"
       - "admin"
@@ -77,21 +88,23 @@ apps:
       - "admin"
     default_role: "user"
 
-  # Example 4: Staging with guest approval workflow
-  myapp-staging:
-    name: "My App (Staging)"
+  # Example 4: Restricted admin-only app
+  gatekeeper:
+    name: "Gatekeeper Admin"
     domains:
-      - "staging.myapp.example.com"
+      - "gatekeeper.example.com"
     protected_paths:
       - "/*"
+    allowed_emails:
+      - "admin@example.com"
     roles:
-      - "user"
       - "admin"
-      - "guest"
-    default_role: "guest"
+    default_role: "admin"
 
 rate_limit:
-  # Global rate limit: max requests per IP per minute
+  # Max requests per IP per minute (anonymous users)
   requests_per_minute: 120
+  # Max requests per IP per minute (authenticated users, 0 = use default)
+  authenticated_requests_per_minute: 0
   # Burst allowance
   burst: 30
