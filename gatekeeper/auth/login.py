@@ -177,6 +177,13 @@ async def _handle_oauth_callback(
     origin_host = request.session.pop("oauth_origin_host", "")
     app_config = _config.apps.get(app_slug)
 
+    # Check allowed_emails whitelist
+    if app_config and app_config.allowed_emails and email not in app_config.allowed_emails:
+        return HTMLResponse(
+            "<h2>Access denied</h2><p>Your account is not authorised for this application.</p>",
+            status_code=403,
+        )
+
     # Check if OAuth account already linked
     stmt = select(OAuthAccount).where(
         OAuthAccount.provider == provider,
