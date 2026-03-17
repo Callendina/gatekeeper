@@ -114,6 +114,14 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
                 await _log(db, ip, app.slug, path, method, None, "paywall")
                 return Response(status_code=403, content="Usage limit exceeded. Please register.")
 
+        # Auto-extend temp keys on use
+        if api_key_obj.key_type == "temp":
+            new_expiry = datetime.datetime.utcnow() + datetime.timedelta(
+                minutes=app.api_access.temp_key_duration_minutes
+            )
+            api_key_obj.expires_at = new_expiry
+            await db.commit()
+
         # Allowed via API key
         response = Response(status_code=200)
         if api_user:
