@@ -54,7 +54,7 @@ apps:
   # Example 2: App with JS frontend + backend API
   # Frontend pages are open (with paywall). API paths require an API key.
   # Anonymous frontend users get a temp key (30 min). Registered users get
-  # a long-lived key (365 days).
+  # a key lasting registered_key_duration_hours or registered_key_duration_days.
   webapp-prod:
     name: "Web App (Production)"
     domains:
@@ -69,6 +69,14 @@ apps:
         - "/api/*"
       temp_key_duration_minutes: 30
       registered_key_duration_days: 365
+      # registered_key_duration_hours: 3  # alternative (takes precedence over days)
+      api_rate_limits:
+        temp_anonymous_per_minute: 500
+        temp_authenticated_per_minute: 1500
+        registered_per_minute: 100
+        max_temp_anonymous: 10
+        max_temp_authenticated: 50
+        max_registered: 500
     roles:
       - "user"
       - "admin"

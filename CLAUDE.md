@@ -84,7 +84,6 @@ gatekeeper/
   templates/          - Jinja2 HTML templates
 config.d/             - Per-app config fragments (gitignored)
 config.d.example/     - Example app config fragment
-troll/                - Integration test app
 ```
 
 ## Running
@@ -122,8 +121,18 @@ api_access:
   mode: "open"                       # "open" or "key_required"
   paths: ["/api/*"]
   temp_key_duration_minutes: 30
-  registered_key_duration_days: 365
+  registered_key_duration_days: 365   # or use registered_key_duration_hours (takes precedence)
+  # registered_key_duration_hours: 3  # alternative to days
+  api_rate_limits:
+    temp_anonymous_per_minute: 500    # per-key rate limit
+    temp_authenticated_per_minute: 1500
+    registered_per_minute: 100
+    max_temp_anonymous: 10            # max active keys per tier
+    max_temp_authenticated: 50
+    max_registered: 500
 ```
+
+Key issuance returns **429** when the max active keys limit is reached. Per-key rate limiting returns **429** from `/_auth/verify` when a key exceeds its per-minute limit. Admins can boost individual key limits via the admin UI (`/_auth/admin/api-keys`).
 
 ### Rate limit config
 

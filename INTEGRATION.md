@@ -199,13 +199,65 @@ webapp.example.com {
 | `/_auth/api-key` | POST | Authenticated session cookie | Long-lived key (JSON) |
 | `/_auth/api-key/temp` | POST | Session cookie (auto-creates one if none exists) | Short-lived key (JSON) |
 
-Response format:
+Response format (200):
 ```json
 {
     "api_key": "abc123...",
     "expires_at": "2026-03-16T12:00:00Z",
-    "type": "registered",
+    "type": "temp",
     "duration_minutes": 30
+}
+```
+
+Possible error responses:
+
+| Code | When | Body |
+|------|------|------|
+| 400 | Unknown app domain, or API keys not enabled | `{"error": "..."}` |
+| 429 | Max active keys for this tier reached | `{"error": "Maximum temp API keys (anonymous) reached"}` |
+| 500 | Session creation failed (shouldn't happen) | `{"error": "..."}` |
+
+API calls with an expired or rate-limited key return 401 or 429 from the `/_auth/verify` endpoint (passed through by Caddy as-is).
+
+### Active key limits
+
+Gatekeeper limits the number of active (non-expired) keys per tier per app:
+
+| Tier | Default max active keys |
+|------|----------------------|
+| Temp anonymous | 10 |
+| Temp authenticated | 50 |
+| Registered | 500 |
+
+Configurable via `api_access.api_rate_limits.max_temp_anonymous`, `max_temp_authenticated`, `max_registered`.
+
+### Per-key rate limits
+
+Each API key has its own rate limit (requests per minute), separate from the global per-IP limit:
+
+| Tier | Default rate limit |
+|------|-------------------|
+| Temp anonymous | 500/min |
+| Temp authenticated | 1500/min |
+| Registered | 100/min |
+
+Configurable via `api_access.api_rate_limits`. Admins can also boost individual keys via the admin UI.
+
+### Handling 429 in your frontend
+
+```javascript
+async function apiCall(path, options = {}) {
+    const key = await getApiKey();
+    if (!key) return null;
+    const headers = { ...options.headers, "X-API-Key": key };
+    const resp = await fetch(path, { ...options, headers });
+    if (resp.status === 429) {
+        // Rate limited or max keys reached — show user-friendly message
+        const data = await resp.json().catch(() => null);
+        showError(data?.error || "Too many requests. Please try again later.");
+        return null;
+    }
+    return resp;
 }
 ```
 
