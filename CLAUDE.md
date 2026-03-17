@@ -143,7 +143,12 @@ api_access:
 
 **Exempt paths:** paths in `exempt_paths` bypass API key validation, rate limiting, and session slot consumption entirely, even if they match `paths`.
 
-Key issuance returns **429** when the max active keys limit is reached. Per-key rate limiting returns **429** from `/_auth/verify` when a key exceeds its per-minute limit. Admins can boost individual key limits or revoke temp keys via the admin UI (`/_auth/admin/api-keys`).
+All **429** responses return JSON with `type`, `current`, and `limit` fields:
+- `ip_rate_limit`: per-IP rate limit exceeded (includes `ip`)
+- `api_key_rate_limit`: per-key rate limit exceeded (includes `tier`)
+- `max_active_keys`: max active keys for tier reached (includes `tier`)
+
+Admins can boost individual key limits or revoke temp keys via the admin UI (`/_auth/admin/api-keys`).
 
 ### Server config
 
@@ -171,7 +176,7 @@ server:
 | Endpoint | Auth | Returns |
 |----------|------|---------|
 | `GET /_auth/health` | None | `{"status": "ok"}` |
-| `GET /_auth/version` | None | `{"version": 1}` |
+| `GET /_auth/version` | None | `{"version": N}` (git commit count, auto-increments) |
 | `GET /_auth/status/{app_slug}` | None | Active key counts by tier (no sensitive data) |
 | `GET /_auth/status/{app_slug}/keys` | `X-Admin-Key` header | Full list of active keys with emails, IPs, expiry |
 

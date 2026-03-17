@@ -214,10 +214,20 @@ Possible error responses:
 | Code | When | Body |
 |------|------|------|
 | 400 | Unknown app domain, or API keys not enabled | `{"error": "..."}` |
-| 429 | Max active keys for this tier reached | `{"error": "Maximum temp API keys (anonymous) reached"}` |
+| 429 | Max active keys for this tier reached | `{"error": "...", "type": "max_active_keys", "tier": "temp_anonymous", "current": 10, "limit": 10}` |
 | 500 | Session creation failed (shouldn't happen) | `{"error": "..."}` |
 
-API calls with an expired or rate-limited key return 401 or 429 from the `/_auth/verify` endpoint (passed through by Caddy as-is).
+API calls with a rate-limited key return 429 from `/_auth/verify` with details:
+```json
+{"error": "API key rate limit exceeded", "type": "api_key_rate_limit", "tier": "temp_anonymous", "current": 500, "limit": 500}
+```
+
+Per-IP rate limit exceeded returns:
+```json
+{"error": "Rate limited", "type": "ip_rate_limit", "current": 501, "limit": 500, "ip": "1.2.3.4"}
+```
+
+All 429 responses include `type` (what limit was hit), `current` (count at time of rejection), and `limit` (the threshold).
 
 ### Active key limits
 
@@ -270,9 +280,14 @@ async function apiCall(path, options = {}) {
     const headers = { ...options.headers, "X-API-Key": key };
     const resp = await fetch(path, { ...options, headers });
     if (resp.status === 429) {
-        // Rate limited or max keys reached — show user-friendly message
         const data = await resp.json().catch(() => null);
-        showError(data?.error || "Too many requests. Please try again later.");
+        if (data?.type === "max_active_keys") {
+            showError(`Service busy (${data.current}/${data.limit} slots in use)`);
+        } else if (data?.type === "api_key_rate_limit") {
+            showError(`Slow down (${data.current}/${data.limit} requests/min)`);
+        } else {
+            showError(data?.error || "Too many requests. Please try again later.");
+        }
         return null;
     }
     return resp;
