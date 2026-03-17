@@ -110,7 +110,7 @@ async def issue_registered_key(
 
     key = secrets.token_urlsafe(32)
     expires_at = datetime.datetime.utcnow() + datetime.timedelta(
-        days=app.api_access.registered_key_duration_days
+        seconds=app.api_access.registered_key_duration_seconds
     )
 
     api_key = APIKey(

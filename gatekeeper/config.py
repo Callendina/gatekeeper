@@ -49,8 +49,15 @@ class APIAccessConfig:
     paths: list[str] = field(default_factory=list)
     # How long a temp key lasts (for anonymous frontend users)
     temp_key_duration_minutes: int = 30
-    # How long a registered user's key lasts
+    # How long a registered user's key lasts (hours takes precedence if set)
     registered_key_duration_days: int = 365
+    registered_key_duration_hours: int = 0  # 0 = use days
+
+    @property
+    def registered_key_duration_seconds(self) -> int:
+        if self.registered_key_duration_hours > 0:
+            return self.registered_key_duration_hours * 3600
+        return self.registered_key_duration_days * 86400
     # Per-key rate limits for API paths
     api_rate_limits: APIRateLimits = field(default_factory=APIRateLimits)
 
@@ -132,6 +139,7 @@ def _parse_app_config(slug: str, app_raw: dict) -> AppConfig:
         paths=api_raw.get("paths", []),
         temp_key_duration_minutes=api_raw.get("temp_key_duration_minutes", 30),
         registered_key_duration_days=api_raw.get("registered_key_duration_days", 365),
+        registered_key_duration_hours=api_raw.get("registered_key_duration_hours", 0),
         api_rate_limits=_parse_api_rate_limits(api_raw.get("api_rate_limits", {})),
     )
     return AppConfig(
