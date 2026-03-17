@@ -110,6 +110,7 @@ domains: ["myapp.example.com"]
 protected_paths: ["/admin/*"]       # paths requiring authentication
 allowed_emails: []                   # restrict sign-in to these emails (empty = anyone)
 login_html_file: ""                  # custom login page HTML (placeholders: {{APP_NAME}}, {{GOOGLE_URL}}, {{GITHUB_URL}})
+admin_api_key: ""                    # secret for /_auth/status/{slug}/keys endpoint
 default_role: "user"                 # role assigned on first sign-in
 roles: ["user", "admin"]
 paywall:
@@ -164,6 +165,17 @@ server:
 - **Admin UI** is at `/_auth/admin` on any app domain (or a dedicated gatekeeper domain). Only accessible to users with `is_system_admin=True`. Admin auth validates the session cookie directly (not via headers) since `/_auth/*` bypasses forward_auth.
 - **Access log** is stored in SQLite — this is the log admins review to block IPs. It is NOT a replacement for Caddy's access log.
 - **OAuth callbacks redirect to origin host** — if a user starts login from `gatekeeper.callendina.com`, they're redirected back there after OAuth, not to the app's domain.
+
+## Status and monitoring endpoints
+
+| Endpoint | Auth | Returns |
+|----------|------|---------|
+| `GET /_auth/health` | None | `{"status": "ok"}` |
+| `GET /_auth/version` | None | `{"version": 1}` |
+| `GET /_auth/status/{app_slug}` | None | Active key counts by tier (no sensitive data) |
+| `GET /_auth/status/{app_slug}/keys` | `X-Admin-Key` header | Full list of active keys with emails, IPs, expiry |
+
+The `/keys` endpoint requires `admin_api_key` to be set in the app's config and the matching key in the `X-Admin-Key` request header.
 
 ## Creating the first admin user
 

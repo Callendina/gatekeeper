@@ -307,6 +307,10 @@ These are served by gatekeeper through Caddy. You can link to them from your app
 | `/_auth/oauth/github?app=SLUG&next=/path` | Direct GitHub OAuth login |
 | `/_auth/nag?app=SLUG&next=/path` | Paywall nag page (auto-redirected to by gatekeeper) |
 | `/_auth/nag/dismiss?next=/path` | Dismiss nag for 1 hour and continue |
+| `/_auth/health` | Health check (`{"status": "ok"}`) |
+| `/_auth/version` | Version check (`{"version": 1}`) |
+| `/_auth/status/SLUG` | Active key counts by tier (no auth required, no sensitive data) |
+| `/_auth/status/SLUG/keys` | Full active key list (requires `X-Admin-Key` header matching `admin_api_key` in app config) |
 
 Replace `SLUG` with your app's slug as defined in gatekeeper's `config.yaml`.
 
