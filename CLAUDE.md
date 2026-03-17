@@ -117,31 +117,32 @@ paywall:
   max_sessions_per_week: 10          # hard limit (0 = no paywall)
   nag_html_file: ""                  # custom nag page HTML (placeholders: {{APP_NAME}}, {{LOGIN_GOOGLE_URL}}, {{LOGIN_GITHUB_URL}}, {{DISMISS_URL}})
   max_api_calls_per_hour: 0          # for API-only apps (0 = use session tracking)
+rate_limit:                              # per-app rate limit (per IP)
+  requests_per_minute: 500               # anonymous users (default 500)
+  authenticated_requests_per_minute: 2000 # logged-in users (0 = use default)
 api_access:
   mode: "open"                       # "open" or "key_required"
   paths: ["/api/*"]
-  temp_key_duration_minutes: 30
-  registered_key_duration_days: 365   # or use registered_key_duration_hours (takes precedence)
-  # registered_key_duration_hours: 3  # alternative to days
+  exempt_paths: ["/api/v1/health"]   # skip key check for these paths
+  temp_key_duration_minutes: 3       # default temp key duration (auto-extends on use)
+  temp_key_duration_minutes_anonymous: 0      # override for anon (0 = use default)
+  temp_key_duration_minutes_authenticated: 60 # override for logged-in users
+  registered_key_duration_days: 365  # or use registered_key_duration_hours (takes precedence)
+  # registered_key_duration_hours: 3 # alternative to days
   api_rate_limits:
-    temp_anonymous_per_minute: 500    # per-key rate limit
+    temp_anonymous_per_minute: 500   # per-key rate limit
     temp_authenticated_per_minute: 1500
     registered_per_minute: 100
-    max_temp_anonymous: 10            # max active keys per tier
+    max_temp_anonymous: 10           # max active keys per tier (concurrent user cap)
     max_temp_authenticated: 50
     max_registered: 500
 ```
 
-Key issuance returns **429** when the max active keys limit is reached. Per-key rate limiting returns **429** from `/_auth/verify` when a key exceeds its per-minute limit. Admins can boost individual key limits via the admin UI (`/_auth/admin/api-keys`).
+**Temp key auto-extend:** temp keys have their expiry bumped by `temp_key_duration_minutes` on every successful API call. Short-lived keys (e.g. 3 min) stay alive while actively used, but free up slots quickly when abandoned. This makes `max_temp_anonymous` act as a concurrent user cap.
 
-### Rate limit config
+**Exempt paths:** paths in `exempt_paths` bypass API key validation, rate limiting, and session slot consumption entirely, even if they match `paths`.
 
-```yaml
-rate_limit:
-  requests_per_minute: 120
-  authenticated_requests_per_minute: 0   # higher limit for logged-in users (0 = use default)
-  burst: 30
-```
+Key issuance returns **429** when the max active keys limit is reached. Per-key rate limiting returns **429** from `/_auth/verify` when a key exceeds its per-minute limit. Admins can boost individual key limits or revoke temp keys via the admin UI (`/_auth/admin/api-keys`).
 
 ### Server config
 

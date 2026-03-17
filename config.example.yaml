@@ -53,8 +53,8 @@ apps:
 
   # Example 2: App with JS frontend + backend API
   # Frontend pages are open (with paywall). API paths require an API key.
-  # Anonymous frontend users get a temp key (30 min). Registered users get
-  # a key lasting registered_key_duration_hours or registered_key_duration_days.
+  # Temp keys auto-extend on use: 3 min for anon, 60 min for authenticated.
+  # max_temp_anonymous acts as a concurrent user cap (slots free up in 3 min).
   webapp-prod:
     name: "Web App (Production)"
     domains:
@@ -63,18 +63,25 @@ apps:
       - "/admin/*"
     paywall:
       max_sessions_per_week: 10
+    rate_limit:
+      requests_per_minute: 500
+      authenticated_requests_per_minute: 2000
     api_access:
       mode: "key_required"
       paths:
         - "/api/*"
-      temp_key_duration_minutes: 30
+      exempt_paths:                          # no key needed for these
+        - "/api/v1/health"
+        - "/api/v1/env"
+      temp_key_duration_minutes: 3           # anon default (auto-extends on use)
+      temp_key_duration_minutes_authenticated: 60  # signed-in users get 1 hour
       registered_key_duration_days: 365
-      # registered_key_duration_hours: 3  # alternative (takes precedence over days)
+      # registered_key_duration_hours: 3     # alternative (takes precedence over days)
       api_rate_limits:
         temp_anonymous_per_minute: 500
         temp_authenticated_per_minute: 1500
         registered_per_minute: 100
-        max_temp_anonymous: 10
+        max_temp_anonymous: 10               # concurrent anonymous user cap
         max_temp_authenticated: 50
         max_registered: 500
     roles:

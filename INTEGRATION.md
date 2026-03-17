@@ -229,11 +229,29 @@ Gatekeeper limits the number of active (non-expired) keys per tier per app:
 | Temp authenticated | 50 |
 | Registered | 500 |
 
-Configurable via `api_access.api_rate_limits.max_temp_anonymous`, `max_temp_authenticated`, `max_registered`.
+Configurable via `api_access.api_rate_limits.max_temp_anonymous`, `max_temp_authenticated`, `max_registered`. With short temp key durations (e.g. 3 min) and auto-extend, `max_temp_anonymous` acts as a concurrent user cap — slots free up quickly when users leave.
+
+### Temp key auto-extend
+
+Temp keys automatically extend their expiry on every successful API call. The extension uses the configured duration for the key type:
+- `temp_key_duration_minutes` (default, or `temp_key_duration_minutes_anonymous` if set)
+- `temp_key_duration_minutes_authenticated` (for signed-in users, if set)
+
+This means a 3-minute key stays alive indefinitely while the user is active, but frees its slot 3 minutes after the last API call.
+
+### Exempt paths
+
+Paths listed in `api_access.exempt_paths` bypass API key validation, rate limiting, and session slot consumption entirely — even if they match `api_access.paths`. Use this for public endpoints like health checks or config endpoints:
+
+```yaml
+api_access:
+  paths: ["/api/*"]
+  exempt_paths: ["/api/v1/health", "/api/v1/env"]
+```
 
 ### Per-key rate limits
 
-Each API key has its own rate limit (requests per minute), separate from the global per-IP limit:
+Each API key has its own rate limit (requests per minute), separate from the per-app per-IP limit:
 
 | Tier | Default rate limit |
 |------|-------------------|
