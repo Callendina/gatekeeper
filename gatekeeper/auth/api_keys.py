@@ -9,7 +9,7 @@ import secrets
 import datetime
 from fastapi import APIRouter, Request, Response, Depends
 from fastapi.responses import JSONResponse
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from gatekeeper.database import get_db
@@ -19,6 +19,29 @@ from gatekeeper.auth.sessions import validate_session
 
 router = APIRouter(prefix="/_auth")
 _config: GatekeeperConfig = None
+
+
+async def count_active_keys(db: AsyncSession, app_slug: str) -> dict:
+    """Count active (non-expired) API keys by tier for an app."""
+    now = datetime.datetime.utcnow()
+    base = select(func.count(APIKey.id)).where(
+        APIKey.app_slug == app_slug,
+        APIKey.expires_at > now,
+    )
+    temp_anon = await db.scalar(
+        base.where(APIKey.key_type == "temp", APIKey.user_id.is_(None))
+    )
+    temp_auth = await db.scalar(
+        base.where(APIKey.key_type == "temp", APIKey.user_id.isnot(None))
+    )
+    registered = await db.scalar(
+        base.where(APIKey.key_type == "registered")
+    )
+    return {
+        "temp_anonymous": temp_anon or 0,
+        "temp_authenticated": temp_auth or 0,
+        "registered": registered or 0,
+    }
 
 
 def init_api_key_routes(config: GatekeeperConfig):
@@ -61,6 +84,20 @@ async def issue_registered_key(
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
 
     ip = _get_client_ip(request)
+
+    # Check active key limit (count before revoking old key)
+    counts = await count_active_keys(db, app.slug)
+    # Subtract 1 if user already has a registered key (it will be revoked)
+    existing = await db.scalar(
+        select(func.count(APIKey.id)).where(
+            APIKey.user_id == user.id, APIKey.app_slug == app.slug,
+            APIKey.key_type == "registered",
+            APIKey.expires_at > datetime.datetime.utcnow(),
+        )
+    )
+    effective_count = counts["registered"] - (existing or 0)
+    if effective_count >= app.api_access.api_rate_limits.max_registered:
+        return JSONResponse({"error": "Maximum registered API keys reached"}, status_code=429)
 
     # Revoke any existing registered key for this user+app
     await db.execute(
@@ -134,6 +171,16 @@ async def issue_temp_key(
         return JSONResponse({"error": "Could not create session"}, status_code=500)
 
     ip = _get_client_ip(request)
+
+    # Check active key limit
+    counts = await count_active_keys(db, app.slug)
+    limits = app.api_access.api_rate_limits
+    if user is not None:
+        if counts["temp_authenticated"] >= limits.max_temp_authenticated:
+            return JSONResponse({"error": "Maximum temp API keys (authenticated) reached"}, status_code=429)
+    else:
+        if counts["temp_anonymous"] >= limits.max_temp_anonymous:
+            return JSONResponse({"error": "Maximum temp API keys (anonymous) reached"}, status_code=429)
 
     def _maybe_set_cookie(response):
         """Set gk_session cookie if we created a new anonymous session."""

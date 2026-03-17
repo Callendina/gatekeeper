@@ -3,14 +3,16 @@ import os
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
+from fastapi import FastAPI
 
 from gatekeeper.config import (
     GatekeeperConfig, AppConfig, PaywallConfig, APIAccessConfig, RateLimitConfig,
 )
-from gatekeeper.auth.forward_auth import init_forward_auth
-from gatekeeper.auth.login import init_login_routes
-from gatekeeper.auth.api_keys import init_api_key_routes
-from gatekeeper.admin.routes import init_admin_routes
+from gatekeeper.database import init_db
+from gatekeeper.auth.forward_auth import router as forward_auth_router, init_forward_auth
+from gatekeeper.auth.login import router as login_router, init_login_routes
+from gatekeeper.auth.api_keys import router as api_key_router, init_api_key_routes
+from gatekeeper.admin.routes import router as admin_router, init_admin_routes
 from gatekeeper.middleware.rate_limit import _request_log, _api_key_log
 from gatekeeper.middleware.ip_block import _blocked_ips
 
@@ -60,7 +62,6 @@ async def config():
 @pytest_asyncio.fixture
 async def app(config):
     import gatekeeper.database as db_module
-    from gatekeeper.database import init_db
 
     # Remove stale test DB
     if os.path.exists(TEST_DB):
@@ -75,8 +76,21 @@ async def app(config):
     init_api_key_routes(config)
     init_admin_routes(config)
 
-    from gatekeeper.app import app as fastapi_app
-    yield fastapi_app
+    # Build a test app directly (avoids importing gatekeeper.app which
+    # reads config.yaml at module level and may hang on Windows)
+    from starlette.middleware.sessions import SessionMiddleware
+    test_app = FastAPI()
+    test_app.add_middleware(SessionMiddleware, secret_key=config.secret_key)
+    test_app.include_router(forward_auth_router)
+    test_app.include_router(login_router)
+    test_app.include_router(api_key_router)
+    test_app.include_router(admin_router)
+
+    @test_app.get("/_auth/health")
+    async def health():
+        return {"status": "ok"}
+
+    yield test_app
 
     # Cleanup: dispose engine so Windows releases file lock
     _request_log.clear()

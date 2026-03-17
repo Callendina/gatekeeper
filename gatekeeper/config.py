@@ -34,6 +34,10 @@ class APIRateLimits:
     temp_anonymous_per_minute: int = 500
     temp_authenticated_per_minute: int = 1500
     registered_per_minute: int = 100
+    # Max active (non-expired) keys per tier
+    max_temp_anonymous: int = 10
+    max_temp_authenticated: int = 50
+    max_registered: int = 500
 
 
 @dataclass
@@ -108,6 +112,9 @@ def _parse_api_rate_limits(raw: dict) -> APIRateLimits:
         temp_anonymous_per_minute=raw.get("temp_anonymous_per_minute", 500),
         temp_authenticated_per_minute=raw.get("temp_authenticated_per_minute", 1500),
         registered_per_minute=raw.get("registered_per_minute", 100),
+        max_temp_anonymous=raw.get("max_temp_anonymous", 10),
+        max_temp_authenticated=raw.get("max_temp_authenticated", 50),
+        max_registered=raw.get("max_registered", 500),
     )
 
 

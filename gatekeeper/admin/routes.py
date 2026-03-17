@@ -76,11 +76,19 @@ async def admin_dashboard(request: Request, db: AsyncSession = Depends(get_db)):
     user_count = await db.scalar(select(func.count(User.id)))
     blocked_count = await db.scalar(select(func.count(IPBlocklist.id)))
 
+    # Get active API key counts per app
+    from gatekeeper.auth.api_keys import count_active_keys
+    api_key_counts = {}
+    for slug in _config.apps:
+        if _config.apps[slug].api_access.enabled:
+            api_key_counts[slug] = await count_active_keys(db, slug)
+
     return templates.TemplateResponse("admin/dashboard.html", {
         "request": request,
         "user_count": user_count,
         "blocked_count": blocked_count,
         "apps": _config.apps,
+        "api_key_counts": api_key_counts,
         "admin_email": admin,
         "environment": _config.environment,
     })

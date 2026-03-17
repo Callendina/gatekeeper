@@ -57,6 +57,30 @@
             </li>
             {% endfor %}
         </ul>
+
+        {% if api_key_counts %}
+        <h2 style="margin-top: 2rem;">Active API Keys</h2>
+        <table style="width:100%; border-collapse:collapse; background:white; border-radius:8px; overflow:hidden; box-shadow:0 1px 3px rgba(0,0,0,0.1);">
+            <thead>
+                <tr style="background:#f8f9fa;">
+                    <th style="padding:0.75rem 1rem; text-align:left;">App</th>
+                    <th style="padding:0.75rem 1rem; text-align:right;">Temp (anon)</th>
+                    <th style="padding:0.75rem 1rem; text-align:right;">Temp (auth)</th>
+                    <th style="padding:0.75rem 1rem; text-align:right;">Registered</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for slug, counts in api_key_counts.items() %}
+                <tr style="border-bottom:1px solid #eee;">
+                    <td style="padding:0.75rem 1rem;">{{ slug }}</td>
+                    <td style="padding:0.75rem 1rem; text-align:right;">{{ counts.temp_anonymous }} / {{ apps[slug].api_access.api_rate_limits.max_temp_anonymous }}</td>
+                    <td style="padding:0.75rem 1rem; text-align:right;">{{ counts.temp_authenticated }} / {{ apps[slug].api_access.api_rate_limits.max_temp_authenticated }}</td>
+                    <td style="padding:0.75rem 1rem; text-align:right;">{{ counts.registered }} / {{ apps[slug].api_access.api_rate_limits.max_registered }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
     </div>
 </body>
 </html>
