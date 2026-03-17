@@ -117,6 +117,8 @@ class APIKey(Base):
         DateTime, default=datetime.datetime.utcnow
     )
     expires_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False)
+    # Optional per-key rate limit override (requests/min). 0 = use default.
+    rate_limit_override: Mapped[int] = mapped_column(Integer, default=0)
 
     user: Mapped["User | None"] = relationship()
 

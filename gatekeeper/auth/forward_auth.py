@@ -92,9 +92,11 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
             await _log(db, ip, app.slug, path, method, None, "api_key_invalid")
             return Response(status_code=401, content="Invalid or expired API key")
 
-        # Per-key rate limit
+        # Per-key rate limit (override takes precedence if set)
         limits = app.api_access.api_rate_limits
-        if api_key_obj.key_type == "registered":
+        if api_key_obj.rate_limit_override > 0:
+            key_limit = api_key_obj.rate_limit_override
+        elif api_key_obj.key_type == "registered":
             key_limit = limits.registered_per_minute
         elif api_key_obj.user_id is not None:
             key_limit = limits.temp_authenticated_per_minute

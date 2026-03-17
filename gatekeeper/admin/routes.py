@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from gatekeeper.database import get_db
 from gatekeeper.config import GatekeeperConfig
-from gatekeeper.models import User, UserAppRole, IPBlocklist, AccessLog, Session
+from gatekeeper.models import User, UserAppRole, IPBlocklist, AccessLog, Session, APIKey
 from gatekeeper.middleware.ip_block import block_ip, unblock_ip
 from gatekeeper.auth.sessions import validate_session
 
@@ -235,3 +235,107 @@ async def access_log_page(
         "admin_email": admin,
         "environment": _config.environment,
     })
+
+
+@router.get("/api-keys")
+async def api_keys_page(
+    request: Request,
+    app_slug: str = "",
+    db: AsyncSession = Depends(get_db),
+):
+    admin, redirect = _check_admin(await _require_admin(request, db))
+    if redirect:
+        return redirect
+
+    from gatekeeper.middleware.rate_limit import _api_key_log
+    import time
+
+    now = datetime.datetime.utcnow()
+    stmt = select(APIKey).where(APIKey.expires_at > now).order_by(APIKey.created_at.desc())
+    if app_slug:
+        stmt = stmt.where(APIKey.app_slug == app_slug)
+    result = await db.execute(stmt)
+    keys = result.scalars().all()
+
+    # Build key info with usage stats and default limits
+    key_info = []
+    current_time = time.time()
+    window = 60.0
+    for k in keys:
+        # Determine tier and default limit
+        if k.key_type == "registered":
+            tier = "registered"
+        elif k.user_id is not None:
+            tier = "temp_authenticated"
+        else:
+            tier = "temp_anonymous"
+
+        app_config = _config.apps.get(k.app_slug)
+        if app_config and app_config.api_access.enabled:
+            limits = app_config.api_access.api_rate_limits
+            default_limit = {
+                "temp_anonymous": limits.temp_anonymous_per_minute,
+                "temp_authenticated": limits.temp_authenticated_per_minute,
+                "registered": limits.registered_per_minute,
+            }[tier]
+        else:
+            default_limit = 0
+
+        effective_limit = k.rate_limit_override if k.rate_limit_override > 0 else default_limit
+
+        # Get current usage from in-memory tracker
+        timestamps = _api_key_log.get(k.key, [])
+        cutoff = current_time - window
+        usage = len([t for t in timestamps if t > cutoff])
+
+        # Look up user email
+        user_email = None
+        if k.user_id:
+            user_result = await db.execute(select(User).where(User.id == k.user_id))
+            user_obj = user_result.scalar_one_or_none()
+            if user_obj:
+                user_email = user_obj.email
+
+        key_info.append({
+            "id": k.id,
+            "key_short": k.key[:12] + "...",
+            "app_slug": k.app_slug,
+            "tier": tier,
+            "user_email": user_email,
+            "ip_address": k.ip_address,
+            "created_at": k.created_at,
+            "expires_at": k.expires_at,
+            "default_limit": default_limit,
+            "override_limit": k.rate_limit_override,
+            "effective_limit": effective_limit,
+            "usage": usage,
+        })
+
+    return templates.TemplateResponse("admin/api_keys.html", {
+        "request": request,
+        "keys": key_info,
+        "filter_app": app_slug,
+        "apps": _config.apps,
+        "admin_email": admin,
+        "environment": _config.environment,
+    })
+
+
+@router.post("/api-keys/{key_id}/boost")
+async def boost_api_key(
+    key_id: int,
+    request: Request,
+    rate_limit: int = Form(...),
+    db: AsyncSession = Depends(get_db),
+):
+    admin, redirect = _check_admin(await _require_admin(request, db))
+    if redirect:
+        return redirect
+
+    result = await db.execute(select(APIKey).where(APIKey.id == key_id))
+    api_key = result.scalar_one_or_none()
+    if api_key:
+        api_key.rate_limit_override = rate_limit
+        await db.commit()
+
+    return RedirectResponse(url="/_auth/admin/api-keys", status_code=302)

@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>API Keys - Gatekeeper Admin</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f5f5; color: #333; }
+        .nav { background: #2c3e50; color: white; padding: 1rem 2rem; display: flex; justify-content: space-between; align-items: center; }
+        .nav a { color: #ecf0f1; text-decoration: none; margin-left: 1.5rem; }
+        .nav a:hover { color: white; }
+        .content { max-width: 1200px; margin: 2rem auto; padding: 0 1rem; }
+        h2 { margin-bottom: 1rem; }
+        .filters { background: white; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); display: flex; gap: 0.5rem; align-items: end; }
+        .filters .field { display: flex; flex-direction: column; }
+        .filters label { font-size: 0.8rem; margin-bottom: 0.2rem; }
+        .filters select { padding: 0.4rem; border: 1px solid #ddd; border-radius: 4px; }
+        table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); font-size: 0.85rem; }
+        th, td { padding: 0.5rem 0.6rem; text-align: left; border-bottom: 1px solid #eee; }
+        th { background: #f8f9fa; font-weight: 600; }
+        .tier-temp_anonymous { color: #e67e22; }
+        .tier-temp_authenticated { color: #2980b9; }
+        .tier-registered { color: #27ae60; }
+        .usage-bar { display: inline-block; width: 60px; height: 8px; background: #eee; border-radius: 4px; overflow: hidden; vertical-align: middle; margin-right: 0.3rem; }
+        .usage-fill { height: 100%; border-radius: 4px; }
+        .usage-ok { background: #27ae60; }
+        .usage-warn { background: #e67e22; }
+        .usage-high { background: #e74c3c; }
+        button { padding: 0.3rem 0.6rem; border-radius: 4px; border: none; cursor: pointer; font-size: 0.8rem; }
+        .btn-boost { background: #4a90d9; color: white; }
+        .btn-boost:hover { background: #3a7bc8; }
+        input[type="number"] { width: 60px; padding: 0.2rem; border: 1px solid #ddd; border-radius: 3px; font-size: 0.8rem; }
+        .boost-form { display: inline-flex; gap: 0.3rem; align-items: center; }
+        .override { color: #8e44ad; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="nav">
+        <strong>Gatekeeper Admin</strong>{% if environment %}<span style="color:#e74c3c;font-weight:bold;margin-left:1rem;font-size:0.9rem;">{{ environment }}</span>{% endif %}
+        <div>
+            <a href="/_auth/admin">Dashboard</a>
+            <a href="/_auth/admin/users">Users</a>
+            <a href="/_auth/admin/ip-blocklist">IP Blocklist</a>
+            <a href="/_auth/admin/access-log">Access Log</a>
+            <a href="/_auth/admin/api-keys">API Keys</a>
+            <span style="margin-left:1.5rem; opacity:0.7;">{{ admin_email }}</span>
+        </div>
+    </div>
+    <div class="content">
+        <h2>Active API Keys</h2>
+
+        <form method="GET" action="/_auth/admin/api-keys" class="filters">
+            <div class="field">
+                <label>App</label>
+                <select name="app_slug">
+                    <option value="">All apps</option>
+                    {% for slug in apps %}
+                    <option value="{{ slug }}" {% if filter_app == slug %}selected{% endif %}>{{ slug }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <button type="submit" style="background:#4a90d9;color:white;">Filter</button>
+        </form>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Key</th>
+                    <th>App</th>
+                    <th>Tier</th>
+                    <th>User</th>
+                    <th>IP</th>
+                    <th>Created</th>
+                    <th>Expires</th>
+                    <th>Usage / Limit</th>
+                    <th>Boost</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for k in keys %}
+                <tr>
+                    <td><code>{{ k.key_short }}</code></td>
+                    <td>{{ k.app_slug }}</td>
+                    <td class="tier-{{ k.tier }}">{{ k.tier.replace('_', ' ') }}</td>
+                    <td>{{ k.user_email or '-' }}</td>
+                    <td>{{ k.ip_address }}</td>
+                    <td>{{ k.created_at.strftime('%m-%d %H:%M') }}</td>
+                    <td>{{ k.expires_at.strftime('%m-%d %H:%M') }}</td>
+                    <td>
+                        {% set pct = (k.usage / k.effective_limit * 100) if k.effective_limit > 0 else 0 %}
+                        <span class="usage-bar">
+                            <span class="usage-fill {% if pct > 80 %}usage-high{% elif pct > 50 %}usage-warn{% else %}usage-ok{% endif %}" style="width:{{ [pct, 100] | min }}%"></span>
+                        </span>
+                        {{ k.usage }} / {% if k.override_limit > 0 %}<span class="override">{{ k.effective_limit }}</span>{% else %}{{ k.effective_limit }}{% endif %}
+                    </td>
+                    <td>
+                        <form method="POST" action="/_auth/admin/api-keys/{{ k.id }}/boost" class="boost-form">
+                            <input type="number" name="rate_limit" value="{{ k.override_limit or k.effective_limit }}" min="0">
+                            <button type="submit" class="btn-boost">Set</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+                {% if not keys %}
+                <tr><td colspan="9" style="text-align:center; color:#999;">No active API keys</td></tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+</body>
+</html>
