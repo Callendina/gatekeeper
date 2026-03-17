@@ -1,7 +1,8 @@
 """Main FastAPI application for Gatekeeper."""
 import asyncio
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, Request
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -84,9 +85,62 @@ async def version():
 async def status(app_slug: str, db: AsyncSession = Depends(get_db)):
     from gatekeeper.auth.api_keys import count_active_keys
     if app_slug not in config.apps:
-        return {"error": "Unknown app"}, 404
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"error": "Unknown app"}, status_code=404)
     counts = await count_active_keys(db, app_slug)
     return {
         "app": app_slug,
         "active_keys": counts,
     }
+
+
+@app.get("/_auth/status/{app_slug}/keys")
+async def status_keys(app_slug: str, request: Request, db: AsyncSession = Depends(get_db)):
+    """List all active API keys for an app. Requires admin_api_key in X-Admin-Key header."""
+    from fastapi.responses import JSONResponse
+    from gatekeeper.models import APIKey, User
+    import datetime
+
+    if app_slug not in config.apps:
+        return JSONResponse({"error": "Unknown app"}, status_code=404)
+
+    app_config = config.apps[app_slug]
+    if not app_config.admin_api_key:
+        return JSONResponse({"error": "admin_api_key not configured for this app"}, status_code=403)
+
+    provided_key = request.headers.get("x-admin-key", "")
+    if not provided_key or provided_key != app_config.admin_api_key:
+        return JSONResponse({"error": "Invalid or missing X-Admin-Key"}, status_code=401)
+
+    now = datetime.datetime.utcnow()
+    stmt = select(APIKey).where(
+        APIKey.app_slug == app_slug,
+        APIKey.expires_at > now,
+    ).order_by(APIKey.created_at.desc())
+    result = await db.execute(stmt)
+    keys = result.scalars().all()
+
+    key_list = []
+    for k in keys:
+        # Look up user email if authenticated key
+        user_email = None
+        if k.user_id:
+            user_result = await db.execute(select(User).where(User.id == k.user_id))
+            user_obj = user_result.scalar_one_or_none()
+            if user_obj:
+                user_email = user_obj.email
+
+        tier = "registered" if k.key_type == "registered" else (
+            "temp_authenticated" if k.user_id else "temp_anonymous"
+        )
+        key_list.append({
+            "key": k.key,
+            "tier": tier,
+            "user_email": user_email,
+            "ip_address": k.ip_address,
+            "created_at": k.created_at.isoformat() + "Z",
+            "expires_at": k.expires_at.isoformat() + "Z",
+            "rate_limit_override": k.rate_limit_override,
+        })
+
+    return {"app": app_slug, "keys": key_list}

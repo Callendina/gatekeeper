@@ -95,6 +95,7 @@ class AppConfig:
     api_access: APIAccessConfig = field(default_factory=APIAccessConfig)
     rate_limit: RateLimitConfig = field(default_factory=RateLimitConfig)
     login_html_file: str = ""
+    admin_api_key: str = ""  # secret key for app-level admin API (e.g. listing active keys)
     allowed_emails: list[str] = field(default_factory=list)  # empty = anyone can sign in
     roles: list[str] = field(default_factory=lambda: ["user", "admin"])
     default_role: str = "user"
@@ -172,6 +173,7 @@ def _parse_app_config(slug: str, app_raw: dict) -> AppConfig:
         rate_limit=rate_limit,
         roles=app_raw.get("roles", ["user", "admin"]),
         login_html_file=app_raw.get("login_html_file", ""),
+        admin_api_key=app_raw.get("admin_api_key", ""),
         allowed_emails=app_raw.get("allowed_emails", []),
         default_role=app_raw.get("default_role", "user"),
     )
