@@ -47,6 +47,8 @@ class APIAccessConfig:
     mode: str = "open"
     # Glob patterns for paths that are considered API paths
     paths: list[str] = field(default_factory=list)
+    # Paths exempt from API key requirement (even if they match paths above)
+    exempt_paths: list[str] = field(default_factory=list)
     # Default temp key duration (used if per-type overrides not set)
     temp_key_duration_minutes: int = 30
     # Optional per-type overrides (0 = use temp_key_duration_minutes)
@@ -147,6 +149,7 @@ def _parse_app_config(slug: str, app_raw: dict) -> AppConfig:
     api_access = APIAccessConfig(
         mode=api_raw.get("mode", "open"),
         paths=api_raw.get("paths", []),
+        exempt_paths=api_raw.get("exempt_paths", []),
         temp_key_duration_minutes=api_raw.get("temp_key_duration_minutes", 30),
         temp_key_duration_minutes_anonymous=api_raw.get("temp_key_duration_minutes_anonymous", 0),
         temp_key_duration_minutes_authenticated=api_raw.get("temp_key_duration_minutes_authenticated", 0),

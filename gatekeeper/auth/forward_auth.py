@@ -75,7 +75,8 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
         return Response(status_code=429, content="Rate limited")
 
     # 4. Check if this is an API path requiring a key
-    is_api_path = app.api_access.enabled and _path_matches_any(path, app.api_access.paths)
+    is_exempt = app.api_access.exempt_paths and _path_matches_any(path, app.api_access.exempt_paths)
+    is_api_path = app.api_access.enabled and _path_matches_any(path, app.api_access.paths) and not is_exempt
 
     if is_api_path:
         # API paths in key_required mode: must have a valid X-API-Key
