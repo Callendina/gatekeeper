@@ -300,10 +300,10 @@ async def api_keys_page(
 
         effective_limit = k.rate_limit_override if k.rate_limit_override > 0 else default_limit
 
-        # Get current usage from in-memory tracker
-        timestamps = _api_key_log.get(k.key, [])
+        # Get current weighted usage from in-memory tracker
+        entries = _api_key_log.get(k.key, [])
         cutoff = current_time - window
-        usage = len([t for t in timestamps if t > cutoff])
+        usage = sum(w for t, w in entries if t > cutoff)
 
         # Look up user email
         user_email = None

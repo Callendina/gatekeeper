@@ -7,8 +7,8 @@ from gatekeeper.config import RateLimitConfig
 # Store timestamps of recent requests per IP
 _request_log: dict[str, list[float]] = defaultdict(list)
 
-# Separate tracker for per-API-key rate limiting
-_api_key_log: dict[str, list[float]] = defaultdict(list)
+# Separate tracker for per-API-key rate limiting: stores (timestamp, weight) tuples
+_api_key_log: dict[str, list[tuple[float, int]]] = defaultdict(list)
 
 
 def check_rate_limit(
@@ -34,21 +34,21 @@ def check_rate_limit(
 
 
 def check_api_key_rate_limit(
-    api_key: str, limit_per_minute: int
+    api_key: str, limit_per_minute: int, weight: int = 1
 ) -> tuple[bool, int, int]:
-    """Returns (allowed, current_count, limit)."""
+    """Returns (allowed, weighted_count, limit)."""
     now = time.time()
     window = 60.0
 
     cutoff = now - window
-    _api_key_log[api_key] = [t for t in _api_key_log[api_key] if t > cutoff]
+    _api_key_log[api_key] = [(t, w) for t, w in _api_key_log[api_key] if t > cutoff]
 
-    count = len(_api_key_log[api_key])
-    if count >= limit_per_minute:
-        return False, count, limit_per_minute
+    weighted_count = sum(w for _, w in _api_key_log[api_key])
+    if weighted_count + weight > limit_per_minute:
+        return False, weighted_count, limit_per_minute
 
-    _api_key_log[api_key].append(now)
-    return True, count + 1, limit_per_minute
+    _api_key_log[api_key].append((now, weight))
+    return True, weighted_count + weight, limit_per_minute
 
 
 def cleanup_old_entries():
@@ -60,6 +60,6 @@ def cleanup_old_entries():
     for k in stale:
         del _request_log[k]
 
-    stale = [k for k, ts in _api_key_log.items() if not ts or ts[-1] < cutoff]
+    stale = [k for k, ts in _api_key_log.items() if not ts or ts[-1][0] < cutoff]
     for k in stale:
         del _api_key_log[k]

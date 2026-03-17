@@ -116,7 +116,14 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
         else:
             key_limit = limits.temp_anonymous_per_minute
 
-        krl_ok, krl_count, krl_limit = check_api_key_rate_limit(api_key_obj.key, key_limit)
+        # Look up path weight (default 1)
+        path_weight = 1
+        for pattern, weight in app.api_access.path_weights.items():
+            if fnmatch.fnmatch(path, pattern):
+                path_weight = weight
+                break
+
+        krl_ok, krl_count, krl_limit = check_api_key_rate_limit(api_key_obj.key, key_limit, weight=path_weight)
         if not krl_ok:
             await _log(db, ip, app.slug, path, method, None, "api_key_rate_limited")
             tier = "registered" if api_key_obj.key_type == "registered" else (
