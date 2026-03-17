@@ -1,7 +1,8 @@
 """Main FastAPI application for Gatekeeper."""
 import asyncio
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.middleware.sessions import SessionMiddleware
 
 from gatekeeper.config import load_config
@@ -77,3 +78,15 @@ async def health():
 @app.get("/_auth/version")
 async def version():
     return {"version": 1}
+
+
+@app.get("/_auth/status/{app_slug}")
+async def status(app_slug: str, db: AsyncSession = Depends(get_db)):
+    from gatekeeper.auth.api_keys import count_active_keys
+    if app_slug not in config.apps:
+        return {"error": "Unknown app"}, 404
+    counts = await count_active_keys(db, app_slug)
+    return {
+        "app": app_slug,
+        "active_keys": counts,
+    }
