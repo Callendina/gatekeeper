@@ -1,5 +1,6 @@
 """Main FastAPI application for Gatekeeper."""
 import asyncio
+from pathlib import Path
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from starlette.middleware.sessions import SessionMiddleware
@@ -72,3 +73,23 @@ async def root():
 @app.get("/_auth/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/_auth/version")
+async def version():
+    import subprocess
+    try:
+        commit = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=str(Path(__file__).parent.parent),
+            stderr=subprocess.DEVNULL,
+        ).decode().strip()
+        message = subprocess.check_output(
+            ["git", "log", "-1", "--format=%s"],
+            cwd=str(Path(__file__).parent.parent),
+            stderr=subprocess.DEVNULL,
+        ).decode().strip()
+    except Exception:
+        commit = "unknown"
+        message = ""
+    return {"commit": commit, "message": message}
