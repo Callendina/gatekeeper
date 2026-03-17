@@ -32,6 +32,7 @@ def get_test_config() -> GatekeeperConfig:
                 domains=["testapp.example.com"],
                 protected_paths=["/protected/*", "/admin/*"],
                 paywall=PaywallConfig(max_sessions_per_week=3),
+                rate_limit=RateLimitConfig(requests_per_minute=10),
                 roles=["user", "admin"],
                 default_role="user",
             ),
@@ -46,11 +47,11 @@ def get_test_config() -> GatekeeperConfig:
                     temp_key_duration_minutes=30,
                     registered_key_duration_days=365,
                 ),
+                rate_limit=RateLimitConfig(requests_per_minute=10),
                 roles=["user", "admin"],
                 default_role="user",
             ),
         },
-        rate_limit=RateLimitConfig(requests_per_minute=10, burst=5),
     )
 
 

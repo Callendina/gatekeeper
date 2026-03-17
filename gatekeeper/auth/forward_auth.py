@@ -69,8 +69,8 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
     if session_token:
         session, user, role = await validate_session(db, session_token, app.slug)
 
-    # 3. Check rate limit (authenticated users may get a higher limit)
-    if not check_rate_limit(ip, _config.rate_limit, authenticated=user is not None):
+    # 3. Check rate limit (per-app, authenticated users may get a higher limit)
+    if not check_rate_limit(ip, app.rate_limit, authenticated=user is not None):
         await _log(db, ip, app.slug, path, method, None, "rate_limited")
         return Response(status_code=429, content="Rate limited")
 

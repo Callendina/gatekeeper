@@ -67,6 +67,12 @@ class APIAccessConfig:
 
 
 @dataclass
+class RateLimitConfig:
+    requests_per_minute: int = 500
+    authenticated_requests_per_minute: int = 2000  # 0 = use requests_per_minute
+
+
+@dataclass
 class AppConfig:
     slug: str
     name: str
@@ -74,17 +80,11 @@ class AppConfig:
     protected_paths: list[str] = field(default_factory=list)
     paywall: PaywallConfig = field(default_factory=PaywallConfig)
     api_access: APIAccessConfig = field(default_factory=APIAccessConfig)
+    rate_limit: RateLimitConfig = field(default_factory=RateLimitConfig)
     login_html_file: str = ""
     allowed_emails: list[str] = field(default_factory=list)  # empty = anyone can sign in
     roles: list[str] = field(default_factory=lambda: ["user", "admin"])
     default_role: str = "user"
-
-
-@dataclass
-class RateLimitConfig:
-    requests_per_minute: int = 120
-    authenticated_requests_per_minute: int = 0  # 0 = use requests_per_minute
-    burst: int = 30
 
 
 @dataclass
@@ -103,7 +103,6 @@ class GatekeeperConfig:
     # If set, all GitHub OAuth flows route through this domain.
     github_callback_domain: str = ""
     apps: dict[str, AppConfig] = field(default_factory=dict)
-    rate_limit: RateLimitConfig = field(default_factory=RateLimitConfig)
 
     def app_for_domain(self, domain: str) -> AppConfig | None:
         for app in self.apps.values():
@@ -142,6 +141,11 @@ def _parse_app_config(slug: str, app_raw: dict) -> AppConfig:
         registered_key_duration_hours=api_raw.get("registered_key_duration_hours", 0),
         api_rate_limits=_parse_api_rate_limits(api_raw.get("api_rate_limits", {})),
     )
+    rl_raw = app_raw.get("rate_limit", {})
+    rate_limit = RateLimitConfig(
+        requests_per_minute=rl_raw.get("requests_per_minute", 120),
+        authenticated_requests_per_minute=rl_raw.get("authenticated_requests_per_minute", 0),
+    )
     return AppConfig(
         slug=slug,
         name=app_raw.get("name", slug),
@@ -149,6 +153,7 @@ def _parse_app_config(slug: str, app_raw: dict) -> AppConfig:
         protected_paths=app_raw.get("protected_paths", []),
         paywall=paywall,
         api_access=api_access,
+        rate_limit=rate_limit,
         roles=app_raw.get("roles", ["user", "admin"]),
         login_html_file=app_raw.get("login_html_file", ""),
         allowed_emails=app_raw.get("allowed_emails", []),
@@ -168,8 +173,6 @@ def load_config(path: str = "config.yaml") -> GatekeeperConfig:
     db = raw.get("database", {})
     oauth_google = raw.get("oauth", {}).get("google", {})
     oauth_github = raw.get("oauth", {}).get("github", {})
-    rl = raw.get("rate_limit", {})
-
     apps = {}
     for slug, app_raw in raw.get("apps", {}).items():
         apps[slug] = _parse_app_config(slug, app_raw)
@@ -199,9 +202,4 @@ def load_config(path: str = "config.yaml") -> GatekeeperConfig:
         github_client_secret=oauth_github.get("client_secret", ""),
         github_callback_domain=oauth_github.get("callback_domain", ""),
         apps=apps,
-        rate_limit=RateLimitConfig(
-            requests_per_minute=rl.get("requests_per_minute", 120),
-            authenticated_requests_per_minute=rl.get("authenticated_requests_per_minute", 0),
-            burst=rl.get("burst", 30),
-        ),
     )
