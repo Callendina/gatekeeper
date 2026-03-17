@@ -26,30 +26,47 @@ def init_admin_routes(config: GatekeeperConfig):
 
 async def _require_admin(request: Request, db: AsyncSession):
     """Check that the request is from a system admin by validating the session cookie.
-    Returns the admin email, or a RedirectResponse to the login page."""
+    Returns the admin email, or an appropriate response (redirect to login or access denied)."""
     session_token = request.cookies.get("gk_session")
+    authenticated_user = None
+
     if session_token:
         # Try all configured app slugs
         for app_slug in _config.apps:
             session, user, role = await validate_session(db, session_token, app_slug)
-            if user and user.is_system_admin:
-                return user.email
+            if user:
+                if user.is_system_admin:
+                    return user.email
+                authenticated_user = user.email
 
         # Also check sessions not scoped to any app (e.g. from the admin domain)
-        stmt = select(Session).where(
-            Session.token == session_token,
-            Session.expires_at > datetime.datetime.utcnow(),
-        )
-        result = await db.execute(stmt)
-        session = result.scalar_one_or_none()
-        if session and session.user_id:
-            user_stmt = select(User).where(User.id == session.user_id)
-            user_result = await db.execute(user_stmt)
-            user = user_result.scalar_one_or_none()
-            if user and user.is_system_admin:
-                return user.email
+        if not authenticated_user:
+            stmt = select(Session).where(
+                Session.token == session_token,
+                Session.expires_at > datetime.datetime.utcnow(),
+            )
+            result = await db.execute(stmt)
+            session = result.scalar_one_or_none()
+            if session and session.user_id:
+                user_stmt = select(User).where(User.id == session.user_id)
+                user_result = await db.execute(user_stmt)
+                user = user_result.scalar_one_or_none()
+                if user:
+                    if user.is_system_admin:
+                        return user.email
+                    authenticated_user = user.email
 
-    # Not authenticated or not admin — redirect to login
+    if authenticated_user:
+        # Signed in but not a system admin
+        return HTMLResponse(
+            f"<h2>Access denied</h2>"
+            f"<p>You are signed in as <strong>{authenticated_user}</strong> "
+            f"but this account is not a system administrator.</p>"
+            f"<p><a href='/_auth/logout?app='>Sign out</a> and try a different account.</p>",
+            status_code=403,
+        )
+
+    # Not authenticated — redirect to login
     app_slug = next(iter(_config.apps), "")
     host = request.headers.get("host", "")
     app_for_host = _config.app_for_domain(host)
