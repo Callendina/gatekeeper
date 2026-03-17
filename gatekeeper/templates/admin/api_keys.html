@@ -74,6 +74,7 @@
                     <th>Expires</th>
                     <th>Usage / Limit</th>
                     <th>Boost</th>
+                    <th></th>
                 </tr>
             </thead>
             <tbody>
@@ -99,10 +100,17 @@
                             <button type="submit" class="btn-boost">Set</button>
                         </form>
                     </td>
+                    <td>
+                        {% if k.tier != 'registered' %}
+                        <form method="POST" action="/_auth/admin/api-keys/{{ k.id }}/delete" style="display:inline;">
+                            <button type="submit" style="background:#e74c3c;color:white;border:none;padding:0.3rem 0.6rem;border-radius:4px;cursor:pointer;font-size:0.8rem;">Revoke</button>
+                        </form>
+                        {% endif %}
+                    </td>
                 </tr>
                 {% endfor %}
                 {% if not keys %}
-                <tr><td colspan="9" style="text-align:center; color:#999;">No active API keys</td></tr>
+                <tr><td colspan="10" style="text-align:center; color:#999;">No active API keys</td></tr>
                 {% endif %}
             </tbody>
         </table>

@@ -356,3 +356,20 @@ async def boost_api_key(
         await db.commit()
 
     return RedirectResponse(url="/_auth/admin/api-keys", status_code=302)
+
+
+@router.post("/api-keys/{key_id}/delete")
+async def delete_api_key(
+    key_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    admin, redirect = _check_admin(await _require_admin(request, db))
+    if redirect:
+        return redirect
+
+    from sqlalchemy import delete as sa_delete
+    await db.execute(sa_delete(APIKey).where(APIKey.id == key_id))
+    await db.commit()
+
+    return RedirectResponse(url="/_auth/admin/api-keys", status_code=302)
