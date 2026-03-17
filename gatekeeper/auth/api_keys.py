@@ -96,8 +96,15 @@ async def issue_registered_key(
         )
     )
     effective_count = counts["registered"] - (existing or 0)
-    if effective_count >= app.api_access.api_rate_limits.max_registered:
-        return JSONResponse({"error": "Maximum registered API keys reached"}, status_code=429)
+    max_reg = app.api_access.api_rate_limits.max_registered
+    if effective_count >= max_reg:
+        return JSONResponse({
+            "error": "Maximum registered API keys reached",
+            "type": "max_active_keys",
+            "tier": "registered",
+            "current": effective_count,
+            "limit": max_reg,
+        }, status_code=429)
 
     # Revoke any existing registered key for this user+app
     await db.execute(
@@ -177,10 +184,22 @@ async def issue_temp_key(
     limits = app.api_access.api_rate_limits
     if user is not None:
         if counts["temp_authenticated"] >= limits.max_temp_authenticated:
-            return JSONResponse({"error": "Maximum temp API keys (authenticated) reached"}, status_code=429)
+            return JSONResponse({
+                "error": "Maximum temp API keys (authenticated) reached",
+                "type": "max_active_keys",
+                "tier": "temp_authenticated",
+                "current": counts["temp_authenticated"],
+                "limit": limits.max_temp_authenticated,
+            }, status_code=429)
     else:
         if counts["temp_anonymous"] >= limits.max_temp_anonymous:
-            return JSONResponse({"error": "Maximum temp API keys (anonymous) reached"}, status_code=429)
+            return JSONResponse({
+                "error": "Maximum temp API keys (anonymous) reached",
+                "type": "max_active_keys",
+                "tier": "temp_anonymous",
+                "current": counts["temp_anonymous"],
+                "limit": limits.max_temp_anonymous,
+            }, status_code=429)
 
     def _maybe_set_cookie(response):
         """Set gk_session cookie if we created a new anonymous session."""

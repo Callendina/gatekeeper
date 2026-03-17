@@ -11,6 +11,7 @@ Gatekeeper responds:
   429 -> rate limited
 """
 import datetime
+import json
 from fastapi import APIRouter, Request, Response, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -70,9 +71,20 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
         session, user, role = await validate_session(db, session_token, app.slug)
 
     # 3. Check rate limit (per-app, authenticated users may get a higher limit)
-    if not check_rate_limit(ip, app.rate_limit, authenticated=user is not None):
+    rl_ok, rl_count, rl_limit = check_rate_limit(ip, app.rate_limit, authenticated=user is not None)
+    if not rl_ok:
         await _log(db, ip, app.slug, path, method, None, "rate_limited")
-        return Response(status_code=429, content="Rate limited")
+        return Response(
+            status_code=429,
+            content=json.dumps({
+                "error": "Rate limited",
+                "type": "ip_rate_limit",
+                "current": rl_count,
+                "limit": rl_limit,
+                "ip": ip,
+            }),
+            media_type="application/json",
+        )
 
     # 4. Check if this is an API path requiring a key
     is_exempt = app.api_access.exempt_paths and _path_matches_any(path, app.api_access.exempt_paths)
@@ -104,9 +116,23 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
         else:
             key_limit = limits.temp_anonymous_per_minute
 
-        if not check_api_key_rate_limit(api_key_obj.key, key_limit):
+        krl_ok, krl_count, krl_limit = check_api_key_rate_limit(api_key_obj.key, key_limit)
+        if not krl_ok:
             await _log(db, ip, app.slug, path, method, None, "api_key_rate_limited")
-            return Response(status_code=429, content="API key rate limit exceeded")
+            tier = "registered" if api_key_obj.key_type == "registered" else (
+                "temp_authenticated" if api_key_obj.user_id else "temp_anonymous"
+            )
+            return Response(
+                status_code=429,
+                content=json.dumps({
+                    "error": "API key rate limit exceeded",
+                    "type": "api_key_rate_limit",
+                    "tier": tier,
+                    "current": krl_count,
+                    "limit": krl_limit,
+                }),
+                media_type="application/json",
+            )
 
         # Check paywall for temp keys (anonymous usage)
         if api_key_obj.key_type == "temp" and api_key_obj.user_id is None and app.paywall.enabled:

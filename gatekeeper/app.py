@@ -1,5 +1,6 @@
 """Main FastAPI application for Gatekeeper."""
 import asyncio
+from pathlib import Path
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, Request
 from sqlalchemy import select
@@ -78,7 +79,16 @@ async def health():
 
 @app.get("/_auth/version")
 async def version():
-    return {"version": 1}
+    import subprocess
+    try:
+        count = subprocess.check_output(
+            ["git", "rev-list", "--count", "HEAD"],
+            cwd=str(Path(__file__).parent.parent),
+            stderr=subprocess.DEVNULL,
+        ).decode().strip()
+        return {"version": int(count)}
+    except Exception:
+        return {"version": 0}
 
 
 @app.get("/_auth/status/{app_slug}")
