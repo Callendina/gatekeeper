@@ -193,10 +193,10 @@ async def issue_temp_key(
         return response
 
     # Always issue a temp key (attach user_id if authenticated)
+    is_authenticated = user is not None
+    duration = app.api_access.temp_key_duration_for(is_authenticated)
     key = secrets.token_urlsafe(32)
-    expires_at = datetime.datetime.utcnow() + datetime.timedelta(
-        minutes=app.api_access.temp_key_duration_minutes
-    )
+    expires_at = datetime.datetime.utcnow() + datetime.timedelta(minutes=duration)
 
     api_key = APIKey(
         key=key, app_slug=app.slug,
@@ -210,7 +210,7 @@ async def issue_temp_key(
         "api_key": key,
         "expires_at": expires_at.isoformat() + "Z",
         "type": "temp",
-        "duration_minutes": app.api_access.temp_key_duration_minutes,
+        "duration_minutes": duration,
     }))
 
 

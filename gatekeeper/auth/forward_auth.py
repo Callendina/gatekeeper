@@ -116,8 +116,10 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
 
         # Auto-extend temp keys on use
         if api_key_obj.key_type == "temp":
+            is_auth = api_key_obj.user_id is not None
+            duration = app.api_access.temp_key_duration_for(is_auth)
             new_expiry = datetime.datetime.utcnow() + datetime.timedelta(
-                minutes=app.api_access.temp_key_duration_minutes
+                minutes=duration
             )
             api_key_obj.expires_at = new_expiry
             await db.commit()

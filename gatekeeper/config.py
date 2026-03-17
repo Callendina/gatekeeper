@@ -47,8 +47,11 @@ class APIAccessConfig:
     mode: str = "open"
     # Glob patterns for paths that are considered API paths
     paths: list[str] = field(default_factory=list)
-    # How long a temp key lasts (for anonymous frontend users)
+    # Default temp key duration (used if per-type overrides not set)
     temp_key_duration_minutes: int = 30
+    # Optional per-type overrides (0 = use temp_key_duration_minutes)
+    temp_key_duration_minutes_anonymous: int = 0
+    temp_key_duration_minutes_authenticated: int = 0
     # How long a registered user's key lasts (hours takes precedence if set)
     registered_key_duration_days: int = 365
     registered_key_duration_hours: int = 0  # 0 = use days
@@ -58,6 +61,14 @@ class APIAccessConfig:
         if self.registered_key_duration_hours > 0:
             return self.registered_key_duration_hours * 3600
         return self.registered_key_duration_days * 86400
+
+    def temp_key_duration_for(self, authenticated: bool) -> int:
+        """Return temp key duration in minutes for the given user type."""
+        if authenticated and self.temp_key_duration_minutes_authenticated > 0:
+            return self.temp_key_duration_minutes_authenticated
+        if not authenticated and self.temp_key_duration_minutes_anonymous > 0:
+            return self.temp_key_duration_minutes_anonymous
+        return self.temp_key_duration_minutes
     # Per-key rate limits for API paths
     api_rate_limits: APIRateLimits = field(default_factory=APIRateLimits)
 
@@ -137,6 +148,8 @@ def _parse_app_config(slug: str, app_raw: dict) -> AppConfig:
         mode=api_raw.get("mode", "open"),
         paths=api_raw.get("paths", []),
         temp_key_duration_minutes=api_raw.get("temp_key_duration_minutes", 30),
+        temp_key_duration_minutes_anonymous=api_raw.get("temp_key_duration_minutes_anonymous", 0),
+        temp_key_duration_minutes_authenticated=api_raw.get("temp_key_duration_minutes_authenticated", 0),
         registered_key_duration_days=api_raw.get("registered_key_duration_days", 365),
         registered_key_duration_hours=api_raw.get("registered_key_duration_hours", 0),
         api_rate_limits=_parse_api_rate_limits(api_raw.get("api_rate_limits", {})),
