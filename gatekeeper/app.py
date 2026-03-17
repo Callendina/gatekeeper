@@ -1,5 +1,6 @@
 """Main FastAPI application for Gatekeeper."""
 import asyncio
+import datetime
 from pathlib import Path
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, Request
@@ -31,8 +32,13 @@ async def periodic_cleanup():
             await cleanup_expired_keys(db)
 
 
+_started_at = None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _started_at
+    _started_at = datetime.datetime.now(datetime.timezone.utc)
     await init_db(config.database_path)
     init_forward_auth(config)
     init_login_routes(config)
@@ -86,9 +92,13 @@ async def version():
             cwd=str(Path(__file__).parent.parent),
             stderr=subprocess.DEVNULL,
         ).decode().strip()
-        return {"version": int(count)}
+        ver = int(count)
     except Exception:
-        return {"version": 0}
+        ver = 0
+    return {
+        "version": ver,
+        "running_since": _started_at.isoformat() if _started_at else None,
+    }
 
 
 @app.get("/_auth/status/{app_slug}")
