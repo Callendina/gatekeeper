@@ -33,9 +33,20 @@ def _get_client_ip(request: Request) -> str:
     return request.client.host
 
 
+def _resolve_app(request: Request, app: str) -> tuple[str, "AppConfig | None"]:
+    """Resolve app config from slug or fall back to host-based lookup."""
+    app_config = _config.apps.get(app) if app else None
+    if not app_config:
+        host = request.headers.get("host", "")
+        app_config = _config.app_for_domain(host)
+        if app_config:
+            app = app_config.slug
+    return app, app_config
+
+
 @router.get("/login")
 async def login_page(request: Request, app: str = "", next: str = "/"):
-    app_config = _config.apps.get(app)
+    app, app_config = _resolve_app(request, app)
     app_name = app_config.name if app_config else "Application"
 
     # If the app has a custom login HTML file, serve it with placeholders replaced
@@ -62,7 +73,7 @@ async def login_page(request: Request, app: str = "", next: str = "/"):
 
 @router.get("/nag")
 async def nag_page(request: Request, app: str = "", next: str = "/"):
-    app_config = _config.apps.get(app)
+    app, app_config = _resolve_app(request, app)
     app_name = app_config.name if app_config else "Application"
 
     # If the app has a custom nag HTML file, serve it with placeholders replaced
