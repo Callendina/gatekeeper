@@ -1,4 +1,7 @@
 """OAuth login and logout routes served by gatekeeper."""
+import hashlib
+import hmac
+import time
 from fastapi import APIRouter, Request, Depends
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -87,6 +90,35 @@ async def nag_page(request: Request, app: str = "", next: str = "/"):
         "has_google": bool(_config.google_client_id),
         "has_github": bool(_config.github_client_id),
     })
+
+
+def _sign_session_token(session_token: str, timestamp: int) -> str:
+    """HMAC-sign a session token with a timestamp for cross-domain transfer."""
+    msg = f"{session_token}:{timestamp}".encode()
+    return hmac.new(_config.secret_key.encode(), msg, hashlib.sha256).hexdigest()
+
+
+@router.get("/set-session")
+async def set_session(request: Request, token: str = "", sig: str = "", ts: int = 0, next: str = "/"):
+    """Set a session cookie on this domain using a signed token from a cross-domain OAuth callback."""
+    if not token or not sig or not ts:
+        return HTMLResponse("<h2>Invalid request</h2>", status_code=400)
+
+    # Reject if older than 60 seconds
+    if abs(time.time() - ts) > 60:
+        return HTMLResponse("<h2>Link expired</h2>", status_code=400)
+
+    expected_sig = _sign_session_token(token, ts)
+    if not hmac.compare_digest(sig, expected_sig):
+        return HTMLResponse("<h2>Invalid signature</h2>", status_code=400)
+
+    response = RedirectResponse(url=next, status_code=302)
+    response.set_cookie(
+        "gk_session", token,
+        httponly=True, secure=True, samesite="lax",
+        max_age=86400 * 7,
+    )
+    return response
 
 
 @router.get("/nag/dismiss")
@@ -248,14 +280,25 @@ async def _handle_oauth_callback(
     ip = _get_client_ip(request)
     session_token = await create_session(db, user_id, app_slug, ip)
 
-    # Redirect back to where the user started the OAuth flow
-    if origin_host:
-        redirect_url = f"https://{origin_host}{next_url}"
-    elif app_config and app_config.domains:
-        redirect_url = f"https://{app_config.domains[0]}{next_url}"
-    else:
-        redirect_url = next_url
+    # Determine where to redirect
+    current_host = request.headers.get("host", "")
+    target_host = origin_host or (app_config.domains[0] if app_config and app_config.domains else "")
 
+    # If the callback happened on a different domain (e.g. GitHub with a fixed
+    # callback domain), redirect via /_auth/set-session on the target host so
+    # the cookie is set on the correct domain.
+    if target_host and target_host != current_host:
+        from urllib.parse import quote
+        ts = int(time.time())
+        sig = _sign_session_token(session_token, ts)
+        redirect_url = (
+            f"https://{target_host}/_auth/set-session"
+            f"?token={session_token}&sig={sig}&ts={ts}&next={quote(next_url)}"
+        )
+        return RedirectResponse(url=redirect_url, status_code=302)
+
+    # Same domain — set cookie directly
+    redirect_url = f"https://{target_host}{next_url}" if target_host else next_url
     response = RedirectResponse(url=redirect_url, status_code=302)
     response.set_cookie(
         "gk_session", session_token,
