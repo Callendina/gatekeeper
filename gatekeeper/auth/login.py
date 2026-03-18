@@ -68,8 +68,12 @@ async def nag_page(request: Request, app: str = "", next: str = "/"):
             with open(app_config.paywall.nag_html_file) as f:
                 html = f.read()
             html = html.replace("{{APP_NAME}}", app_name)
-            html = html.replace("{{LOGIN_GOOGLE_URL}}", f"/_auth/oauth/google?app={app}&next={next}")
-            html = html.replace("{{LOGIN_GITHUB_URL}}", f"/_auth/oauth/github?app={app}&next={next}")
+            google_url = f"/_auth/oauth/google?app={app}&next={next}"
+            github_url = f"/_auth/oauth/github?app={app}&next={next}"
+            html = html.replace("{{LOGIN_GOOGLE_URL}}", google_url)
+            html = html.replace("{{LOGIN_GITHUB_URL}}", github_url)
+            html = html.replace("{{GOOGLE_URL}}", google_url)
+            html = html.replace("{{GITHUB_URL}}", github_url)
             html = html.replace("{{DISMISS_URL}}", f"/_auth/nag/dismiss?next={next}")
             return HTMLResponse(html)
         except FileNotFoundError:
