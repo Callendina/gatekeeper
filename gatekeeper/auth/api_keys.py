@@ -211,11 +211,46 @@ async def issue_temp_key(
             )
         return response
 
-    # Always issue a temp key (attach user_id if authenticated)
+    # Reuse an existing active temp key if one exists for this user/session
     is_authenticated = user is not None
     duration = app.api_access.temp_key_duration_for(is_authenticated)
+    now = datetime.datetime.utcnow()
+
+    if is_authenticated:
+        existing_stmt = select(APIKey).where(
+            APIKey.user_id == user.id,
+            APIKey.app_slug == app.slug,
+            APIKey.key_type == "temp",
+            APIKey.expires_at > now,
+        )
+    else:
+        # For anonymous users, match by IP
+        existing_stmt = select(APIKey).where(
+            APIKey.user_id.is_(None),
+            APIKey.app_slug == app.slug,
+            APIKey.key_type == "temp",
+            APIKey.ip_address == ip,
+            APIKey.expires_at > now,
+        )
+
+    existing_result = await db.execute(existing_stmt)
+    existing_key = existing_result.scalar_one_or_none()
+
+    if existing_key:
+        # Extend expiry as if it were just used
+        existing_key.expires_at = now + datetime.timedelta(minutes=duration)
+        await db.commit()
+        return _maybe_set_cookie(JSONResponse({
+            "api_key": existing_key.key,
+            "expires_at": existing_key.expires_at.isoformat() + "Z",
+            "type": "temp",
+            "duration_minutes": duration,
+            "reused": True,
+        }))
+
+    # No existing key — issue a new temp key
     key = secrets.token_urlsafe(32)
-    expires_at = datetime.datetime.utcnow() + datetime.timedelta(minutes=duration)
+    expires_at = now + datetime.timedelta(minutes=duration)
 
     api_key = APIKey(
         key=key, app_slug=app.slug,
