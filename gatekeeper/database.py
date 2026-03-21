@@ -16,7 +16,7 @@ async def init_db(database_path: str):
     async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
     async with engine.begin() as conn:
-        from gatekeeper.models import User, OAuthAccount, Session, IPBlocklist, AnonymousUsage, AccessLog, APIKey  # noqa: F401
+        from gatekeeper.models import User, OAuthAccount, Session, IPBlocklist, AnonymousUsage, AccessLog, APIKey, InviteCode, InviteUse, InviteWaitlist  # noqa: F401
         await conn.run_sync(Base.metadata.create_all)
 
         # Migrate: add columns that may be missing from older databases

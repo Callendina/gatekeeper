@@ -89,6 +89,27 @@ class RateLimitConfig:
 
 
 @dataclass
+class PersonalInviteConfig:
+    enabled: bool = True
+    max_per_user: int = 5
+    expiry_days: int = 7
+
+
+@dataclass
+class InviteConfig:
+    mode: str = "open"  # "open" | "invite_only"
+    invite_html_file: str = ""
+    waitlist: bool = False
+    url_param: str = "invite"
+    cookie_max_age_days: int = 30
+    personal_invites: PersonalInviteConfig = field(default_factory=PersonalInviteConfig)
+
+    @property
+    def enabled(self) -> bool:
+        return self.mode == "invite_only"
+
+
+@dataclass
 class AppConfig:
     slug: str
     name: str
@@ -97,6 +118,7 @@ class AppConfig:
     paywall: PaywallConfig = field(default_factory=PaywallConfig)
     api_access: APIAccessConfig = field(default_factory=APIAccessConfig)
     rate_limit: RateLimitConfig = field(default_factory=RateLimitConfig)
+    invite: InviteConfig = field(default_factory=InviteConfig)
     login_html_file: str = ""
     admin_api_key: str = ""  # secret key for app-level admin API (e.g. listing active keys)
     allowed_emails: list[str] = field(default_factory=list)  # empty = anyone can sign in
@@ -167,6 +189,20 @@ def _parse_app_config(slug: str, app_raw: dict) -> AppConfig:
         requests_per_minute=rl_raw.get("requests_per_minute", 120),
         authenticated_requests_per_minute=rl_raw.get("authenticated_requests_per_minute", 0),
     )
+    invite_raw = app_raw.get("invite", {}) or {}
+    pi_raw = invite_raw.get("personal_invites", {}) or {}
+    invite = InviteConfig(
+        mode=invite_raw.get("mode", "open"),
+        invite_html_file=invite_raw.get("invite_html_file", ""),
+        waitlist=invite_raw.get("waitlist", False),
+        url_param=invite_raw.get("url_param", "invite"),
+        cookie_max_age_days=invite_raw.get("cookie_max_age_days", 30),
+        personal_invites=PersonalInviteConfig(
+            enabled=pi_raw.get("enabled", True),
+            max_per_user=pi_raw.get("max_per_user", 5),
+            expiry_days=pi_raw.get("expiry_days", 7),
+        ),
+    )
     return AppConfig(
         slug=slug,
         name=app_raw.get("name", slug),
@@ -175,6 +211,7 @@ def _parse_app_config(slug: str, app_raw: dict) -> AppConfig:
         paywall=paywall,
         api_access=api_access,
         rate_limit=rate_limit,
+        invite=invite,
         roles=app_raw.get("roles", ["user", "admin"]),
         login_html_file=app_raw.get("login_html_file", ""),
         admin_api_key=app_raw.get("admin_api_key", ""),

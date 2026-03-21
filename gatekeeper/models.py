@@ -1,5 +1,5 @@
 import datetime
-from sqlalchemy import String, Integer, DateTime, Text, ForeignKey, Index
+from sqlalchemy import String, Integer, Boolean, DateTime, Text, ForeignKey, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from gatekeeper.database import Base
 
@@ -140,3 +140,61 @@ class AccessLog(Base):
     method: Mapped[str] = mapped_column(String(10), nullable=False)
     user_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False)  # allowed, blocked, rate_limited, paywall
+
+
+class InviteCode(Base):
+    __tablename__ = "invite_codes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    app_slug: Mapped[str] = mapped_column(String(100), nullable=False)
+    code: Mapped[str] = mapped_column(String(100), nullable=False)
+    code_type: Mapped[str] = mapped_column(String(20), nullable=False)  # "bulk" or "personal"
+    created_by_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    max_uses: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    use_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    expires_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime, default=datetime.datetime.utcnow
+    )
+
+    uses: Mapped[list["InviteUse"]] = relationship(back_populates="invite_code")
+
+    __table_args__ = (
+        Index("ix_invite_code_app_code", "app_slug", "code", unique=True),
+    )
+
+
+class InviteUse(Base):
+    __tablename__ = "invite_uses"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    invite_code_id: Mapped[int] = mapped_column(ForeignKey("invite_codes.id"), nullable=False)
+    used_by_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    ip_address: Mapped[str] = mapped_column(String(45), nullable=False)
+    granted_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime, default=datetime.datetime.utcnow
+    )
+
+    invite_code: Mapped["InviteCode"] = relationship(back_populates="uses")
+
+
+class InviteWaitlist(Base):
+    __tablename__ = "invite_waitlist"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    app_slug: Mapped[str] = mapped_column(String(100), nullable=False)
+    email: Mapped[str] = mapped_column(String(255), nullable=False)
+    ip_address: Mapped[str] = mapped_column(String(45), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    invite_code_id: Mapped[int | None] = mapped_column(ForeignKey("invite_codes.id"), nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime, default=datetime.datetime.utcnow
+    )
+    reviewed_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
+    reviewed_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    __table_args__ = (
+        Index("ix_waitlist_app_email", "app_slug", "email", unique=True),
+    )

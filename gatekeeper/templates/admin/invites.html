@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Invites - Gatekeeper Admin</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f5f5; color: #333; }
+        .nav { background: #2c3e50; color: white; padding: 1rem 2rem; display: flex; justify-content: space-between; align-items: center; }
+        .nav a { color: #ecf0f1; text-decoration: none; margin-left: 1.5rem; }
+        .nav a:hover { color: white; }
+        .content { max-width: 1200px; margin: 2rem auto; padding: 0 1rem; }
+        h2 { margin-bottom: 1rem; }
+        h3 { margin: 1.5rem 0 0.75rem; }
+        .filters { background: white; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); display: flex; gap: 0.5rem; align-items: end; flex-wrap: wrap; }
+        .filters .field { display: flex; flex-direction: column; }
+        .filters label { font-size: 0.8rem; margin-bottom: 0.2rem; }
+        .filters select, .filters input { padding: 0.4rem; border: 1px solid #ddd; border-radius: 4px; }
+        .create-form { background: white; padding: 1rem; border-radius: 8px; margin-bottom: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); display: flex; gap: 0.5rem; align-items: end; flex-wrap: wrap; }
+        .create-form .field { display: flex; flex-direction: column; }
+        .create-form label { font-size: 0.8rem; margin-bottom: 0.2rem; }
+        .create-form input, .create-form select { padding: 0.4rem; border: 1px solid #ddd; border-radius: 4px; }
+        table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); font-size: 0.85rem; margin-bottom: 2rem; }
+        th, td { padding: 0.5rem 0.6rem; text-align: left; border-bottom: 1px solid #eee; }
+        th { background: #f8f9fa; font-weight: 600; }
+        button { padding: 0.3rem 0.6rem; border-radius: 4px; border: none; cursor: pointer; font-size: 0.8rem; }
+        .btn-create { background: #27ae60; color: white; }
+        .btn-approve { background: #27ae60; color: white; }
+        .btn-deny { background: #e74c3c; color: white; }
+        .status-pending { color: #e67e22; font-weight: 600; }
+        .status-approved { color: #27ae60; }
+        .status-denied { color: #e74c3c; }
+        .code-copy { font-family: monospace; background: #f0f0f0; padding: 0.15rem 0.4rem; border-radius: 3px; user-select: all; }
+        .inactive { opacity: 0.5; }
+        .uses-detail { font-size: 0.8rem; color: #666; }
+    </style>
+</head>
+<body>
+    <div class="nav">
+        <strong>Gatekeeper Admin</strong>{% if environment %}<span style="color:#e74c3c;font-weight:bold;margin-left:1rem;font-size:0.9rem;">{{ environment }}</span>{% endif %}
+        <div>
+            <a href="/_auth/admin">Dashboard</a>
+            <a href="/_auth/admin/users">Users</a>
+            <a href="/_auth/admin/ip-blocklist">IP Blocklist</a>
+            <a href="/_auth/admin/access-log">Access Log</a>
+            <a href="/_auth/admin/api-keys">API Keys</a>
+            <a href="/_auth/admin/invites">Invites</a>
+            <span style="margin-left:1.5rem; opacity:0.7;">{{ admin_email }}</span>
+        </div>
+    </div>
+    <div class="content">
+        <h2>Invite Codes</h2>
+
+        <!-- Filter -->
+        <form class="filters" method="GET" action="/_auth/admin/invites">
+            <div class="field">
+                <label>App</label>
+                <select name="app_slug">
+                    <option value="">All apps</option>
+                    {% for slug, app in apps.items() %}
+                    <option value="{{ slug }}" {{ 'selected' if slug == filter_app }}>{{ app.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <button type="submit" class="btn-create">Filter</button>
+        </form>
+
+        <!-- Create code -->
+        <h3>Create Bulk Code</h3>
+        <form class="create-form" method="POST" action="/_auth/admin/invites/create">
+            <div class="field">
+                <label>App</label>
+                <select name="app_slug" required>
+                    {% for slug, app in apps.items() %}
+                    <option value="{{ slug }}" {{ 'selected' if slug == filter_app }}>{{ app.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="field">
+                <label>Code (blank = auto)</label>
+                <input type="text" name="custom_code" placeholder="e.g. BETA_2026">
+            </div>
+            <div class="field">
+                <label>Max uses</label>
+                <input type="number" name="max_uses" value="100" min="1">
+            </div>
+            <div class="field">
+                <label>Expiry (days, 0=none)</label>
+                <input type="number" name="expiry_days" value="0" min="0">
+            </div>
+            <button type="submit" class="btn-create">Create</button>
+        </form>
+
+        <!-- Codes table -->
+        <h3>Active Codes</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>App</th>
+                    <th>Code</th>
+                    <th>Type</th>
+                    <th>Created By</th>
+                    <th>Uses</th>
+                    <th>Active</th>
+                    <th>Expires</th>
+                    <th>Created</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for c in codes %}
+                <tr class="{{ 'inactive' if not c.active }}">
+                    <td>{{ c.app_slug }}</td>
+                    <td><span class="code-copy">{{ c.code }}</span></td>
+                    <td>{{ c.code_type }}</td>
+                    <td>{{ c.created_by_email or '—' }}</td>
+                    <td>
+                        {{ c.use_count }} / {{ c.max_uses if c.max_uses > 0 else 'unlimited' }}
+                        {% if code_uses.get(c.id) %}
+                        <div class="uses-detail">
+                            {% for u in code_uses[c.id][:5] %}
+                            {{ u.used_by_email or u.ip_address }}{% if not loop.last %}, {% endif %}
+                            {% endfor %}
+                            {% if code_uses[c.id]|length > 5 %}...{% endif %}
+                        </div>
+                        {% endif %}
+                    </td>
+                    <td>{{ 'Yes' if c.active else 'No' }}</td>
+                    <td>{{ c.expires_at.strftime('%Y-%m-%d') if c.expires_at else '—' }}</td>
+                    <td>{{ c.created_at.strftime('%Y-%m-%d %H:%M') if c.created_at else '' }}</td>
+                </tr>
+                {% endfor %}
+                {% if not codes %}
+                <tr><td colspan="8" style="text-align:center; color:#999;">No invite codes</td></tr>
+                {% endif %}
+            </tbody>
+        </table>
+
+        <!-- Waitlist -->
+        <h3>Waitlist</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>App</th>
+                    <th>Email</th>
+                    <th>IP</th>
+                    <th>Status</th>
+                    <th>Code</th>
+                    <th>Requested</th>
+                    <th>Reviewed</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for w in waitlist %}
+                <tr>
+                    <td>{{ w.app_slug }}</td>
+                    <td>{{ w.email }}</td>
+                    <td>{{ w.ip_address }}</td>
+                    <td><span class="status-{{ w.status }}">{{ w.status }}</span></td>
+                    <td>
+                        {% if w.invite_code_id %}
+                        {% for c in codes if c.id == w.invite_code_id %}
+                        <span class="code-copy">{{ c.code }}</span>
+                        {% endfor %}
+                        {% else %}
+                        —
+                        {% endif %}
+                    </td>
+                    <td>{{ w.created_at.strftime('%Y-%m-%d %H:%M') if w.created_at else '' }}</td>
+                    <td>{{ w.reviewed_by or '' }} {{ w.reviewed_at.strftime('%Y-%m-%d') if w.reviewed_at else '' }}</td>
+                    <td>
+                        {% if w.status == 'pending' %}
+                        <form method="POST" action="/_auth/admin/invites/waitlist/{{ w.id }}/approve" style="display:inline">
+                            <button type="submit" class="btn-approve">Approve</button>
+                        </form>
+                        <form method="POST" action="/_auth/admin/invites/waitlist/{{ w.id }}/deny" style="display:inline">
+                            <input type="hidden" name="reason" value="">
+                            <button type="submit" class="btn-deny">Deny</button>
+                        </form>
+                        {% elif w.status == 'denied' %}
+                        <span style="font-size:0.8rem; color:#999;">{{ w.reason or 'IP blocked' }}</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+                {% if not waitlist %}
+                <tr><td colspan="8" style="text-align:center; color:#999;">No waitlist entries</td></tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+</body>
+</html>

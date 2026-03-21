@@ -26,15 +26,16 @@ When gatekeeper returns 200, it sets these headers that Caddy copies to the upst
 
 ### Check order (in forward_auth verify endpoint)
 1. IP blocklist (403 if blocked)
-2. Session validation (cookie-based, done early for rate limit)
-3. Rate limit (429 if exceeded, per-IP, in-memory; authenticated users can get a higher limit)
-4. API key check (for apps with `api_access.mode: "key_required"`)
-5. Protected path check (302 redirect to login if auth required)
-6. Soft paywall — three states:
+2. Invite gate (if `invite.mode: "invite_only"` — see Invite System below)
+3. Session validation (cookie-based, done early for rate limit)
+4. Rate limit (429 if exceeded, per-IP, in-memory; authenticated users can get a higher limit)
+5. API key check (for apps with `api_access.mode: "key_required"`)
+6. Protected path check (302 redirect to login if auth required)
+7. Soft paywall — three states:
    - **allowed**: within free quota, pass through
    - **nag**: exceeded `nag_after_sessions` threshold, 302 redirect to dismissable nag page
    - **blocked**: exceeded `max_sessions_per_week`, 302 redirect to login (no dismiss option)
-7. Allow + set headers
+8. Allow + set headers
 
 ### Caddy config ordering
 
@@ -75,6 +76,7 @@ gatekeeper/
     oauth.py          - Google + GitHub OAuth setup
     sessions.py       - Session create/validate/delete
     api_keys.py       - API key issuance and validation
+    invites.py        - Invite code management, cookie signing, waitlist
   middleware/
     ip_block.py       - IP blocklist (DB + in-memory cache)
     rate_limit.py     - In-memory sliding window rate limiter
@@ -159,6 +161,45 @@ server:
   secret_key: "..."
   environment: "STAGING"              # optional: shown as banner in admin UI
 ```
+
+## Invite system
+
+Apps can require invite codes to access any content. When `invite.mode: "invite_only"`, the invite gate in forward_auth blocks all unauthenticated requests that don't have a valid `gk_invite_granted` cookie.
+
+### Invite flow
+1. Anon visits any page → forward_auth redirects to `/_auth/invite?app=X&next=PATH`
+2. User enters a code (or arrives via `?invite=CODE` link) → code validated, `gk_invite_granted` cookie set
+3. User can now browse anonymously with the cookie
+4. When user signs in via OAuth → invite use is linked to their email in `invite_uses`
+
+### Bypasses (skip invite gate)
+- Authenticated users with a valid session
+- Requests with an `X-API-Key` header (validated later in the chain)
+- Paths matching `api_access.exempt_paths`
+
+### Code types
+- **Bulk codes**: admin-created, reusable (e.g. `BETA_2026`, max 100 uses)
+- **Personal invites**: created by authenticated users, single-use, tracks inviter→invitee
+
+### Waitlist
+When `invite.waitlist: true`, the invite page shows a "join waitlist" option. Admins review waitlist entries in `/_auth/admin/invites` and can approve (generates a single-use code) or deny (blocks the requester's IP).
+
+### Config
+```yaml
+invite:
+  mode: "open"              # "open" | "invite_only"
+  invite_html_file: ""      # custom front door page
+  waitlist: true
+  url_param: "invite"       # query param for link-based invites
+  cookie_max_age_days: 30
+  personal_invites:
+    enabled: true
+    max_per_user: 5
+    expiry_days: 7
+```
+
+### Custom invite page placeholders
+`{{APP_NAME}}`, `{{INVITE_SUBMIT_URL}}`, `{{WAITLIST_SUBMIT_URL}}`, `{{LOGIN_URL}}`
 
 ## Key decisions
 

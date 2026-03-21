@@ -22,9 +22,14 @@ from gatekeeper.middleware.ip_block import is_ip_blocked
 from gatekeeper.middleware.rate_limit import check_rate_limit, check_api_key_rate_limit
 from gatekeeper.middleware.paywall import check_paywall, record_new_session, PaywallResult
 from gatekeeper.auth.api_keys import validate_api_key
+from gatekeeper.auth.invites import (
+    verify_invite_cookie, validate_invite_code_db, record_invite_use,
+    make_invite_cookie,
+)
 from gatekeeper.models import AccessLog
 
 import fnmatch
+from urllib.parse import urlparse, parse_qs, urlencode
 
 router = APIRouter()
 _config: GatekeeperConfig = None
@@ -46,6 +51,69 @@ def _get_client_ip(request: Request) -> str:
     return request.client.host
 
 
+def _has_invite_grant(request: Request, app) -> bool:
+    """Check if request has a valid gk_invite_granted cookie."""
+    cookie = request.cookies.get("gk_invite_granted")
+    if not cookie:
+        return False
+    return verify_invite_cookie(
+        cookie, _config.secret_key, app.slug, app.invite.cookie_max_age_days
+    ) is not None
+
+
+async def _check_invite_gate(request: Request, db, app, ip: str,
+                             path: str, method: str):
+    """Check invite gate. Returns a Response to send, or None to continue."""
+    # Authenticated users with valid sessions always pass
+    session_token = request.cookies.get("gk_session")
+    if session_token:
+        _sess, _usr, _role = await validate_session(db, session_token, app.slug)
+        if _usr is not None:
+            return None  # authenticated user
+
+    # API key in header — let through (key validated later)
+    if request.headers.get("x-forwarded-api-key", ""):
+        return None
+
+    # Exempt paths pass through
+    if app.api_access.exempt_paths and _path_matches_any(path, app.api_access.exempt_paths):
+        return None
+
+    # Valid invite cookie
+    if _has_invite_grant(request, app):
+        return None
+
+    # Check for invite code in URL query params
+    parsed = urlparse(path)
+    qs = parse_qs(parsed.query)
+    code_str = qs.get(app.invite.url_param, [None])[0]
+    if code_str:
+        code_obj = await validate_invite_code_db(db, app.slug, code_str)
+        if code_obj:
+            use = await record_invite_use(db, code_obj, None, ip)
+            # Redirect to clean URL (strip invite param) with cookie set
+            remaining_qs = {k: v for k, v in qs.items() if k != app.invite.url_param}
+            clean_path = parsed.path
+            if remaining_qs:
+                clean_path += "?" + urlencode(remaining_qs, doseq=True)
+            response = Response(status_code=302, headers={"Location": clean_path})
+            cookie_val = make_invite_cookie(
+                use.id, code_obj.id, _config.secret_key, app.slug
+            )
+            response.set_cookie(
+                "gk_invite_granted", cookie_val,
+                httponly=True, secure=True, samesite="lax",
+                max_age=app.invite.cookie_max_age_days * 86400,
+            )
+            await _log(db, ip, app.slug, path, method, None, "invite_granted")
+            return response
+
+    # No valid invite — redirect to invite page
+    await _log(db, ip, app.slug, path, method, None, "invite_required")
+    invite_url = f"/_auth/invite?app={app.slug}&next={path}"
+    return Response(status_code=302, headers={"Location": invite_url})
+
+
 @router.get("/_auth/verify")
 @router.head("/_auth/verify")
 async def verify(request: Request, db: AsyncSession = Depends(get_db)):
@@ -64,7 +132,13 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
         await _log(db, ip, app.slug, path, method, None, "blocked")
         return Response(status_code=403, content="Blocked")
 
-    # 2. Validate session early (needed for rate limit and later checks)
+    # 2. Invite gate (only for invite_only apps)
+    if app.invite.enabled:
+        invite_response = await _check_invite_gate(request, db, app, ip, path, method)
+        if invite_response is not None:
+            return invite_response
+
+    # 3. Validate session early
     session_token = request.cookies.get("gk_session")
     session, user, role = None, None, None
     if session_token:

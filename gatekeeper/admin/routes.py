@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from gatekeeper.database import get_db
 from gatekeeper.config import GatekeeperConfig
-from gatekeeper.models import User, UserAppRole, IPBlocklist, AccessLog, Session, APIKey
+from gatekeeper.models import User, UserAppRole, IPBlocklist, AccessLog, Session, APIKey, InviteCode, InviteUse, InviteWaitlist
 from gatekeeper.middleware.ip_block import block_ip, unblock_ip
 from gatekeeper.auth.sessions import validate_session
 
@@ -373,3 +373,150 @@ async def delete_api_key(
     await db.commit()
 
     return RedirectResponse(url="/_auth/admin/api-keys", status_code=302)
+
+
+# --- Invite management ---
+
+
+@router.get("/invites")
+async def invites_page(
+    request: Request,
+    app_slug: str = "",
+    db: AsyncSession = Depends(get_db),
+):
+    admin, redirect = _check_admin(await _require_admin(request, db))
+    if redirect:
+        return redirect
+
+    code_stmt = select(InviteCode).order_by(InviteCode.created_at.desc())
+    if app_slug:
+        code_stmt = code_stmt.where(InviteCode.app_slug == app_slug)
+    codes = (await db.execute(code_stmt)).scalars().all()
+
+    wl_stmt = select(InviteWaitlist).order_by(InviteWaitlist.created_at.desc())
+    if app_slug:
+        wl_stmt = wl_stmt.where(InviteWaitlist.app_slug == app_slug)
+    waitlist = (await db.execute(wl_stmt)).scalars().all()
+
+    # Load use details for each code
+    code_uses = {}
+    for c in codes:
+        uses_result = await db.execute(
+            select(InviteUse).where(InviteUse.invite_code_id == c.id)
+            .order_by(InviteUse.granted_at.desc())
+        )
+        code_uses[c.id] = uses_result.scalars().all()
+
+    return templates.TemplateResponse("admin/invites.html", {
+        "request": request,
+        "codes": codes,
+        "code_uses": code_uses,
+        "waitlist": waitlist,
+        "filter_app": app_slug,
+        "apps": _config.apps,
+        "admin_email": admin,
+        "environment": _config.environment,
+    })
+
+
+@router.post("/invites/create")
+async def admin_create_code(
+    request: Request,
+    app_slug: str = Form(...),
+    max_uses: int = Form(100),
+    expiry_days: int = Form(0),
+    custom_code: str = Form(""),
+    db: AsyncSession = Depends(get_db),
+):
+    admin, redirect = _check_admin(await _require_admin(request, db))
+    if redirect:
+        return redirect
+
+    from gatekeeper.auth.invites import generate_invite_code
+
+    code = custom_code.strip() or generate_invite_code()
+    expires_at = (
+        datetime.datetime.utcnow() + datetime.timedelta(days=expiry_days)
+        if expiry_days > 0 else None
+    )
+
+    invite = InviteCode(
+        app_slug=app_slug, code=code, code_type="bulk",
+        max_uses=max_uses, expires_at=expires_at,
+    )
+    db.add(invite)
+    await db.commit()
+
+    return RedirectResponse(
+        url=f"/_auth/admin/invites?app_slug={app_slug}", status_code=302
+    )
+
+
+@router.post("/invites/waitlist/{wl_id}/approve")
+async def approve_waitlist(
+    wl_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    admin, redirect = _check_admin(await _require_admin(request, db))
+    if redirect:
+        return redirect
+
+    from gatekeeper.auth.invites import generate_invite_code
+
+    wl = await db.get(InviteWaitlist, wl_id)
+    if not wl or wl.status != "pending":
+        return RedirectResponse(url="/_auth/admin/invites", status_code=302)
+
+    app_config = _config.apps.get(wl.app_slug)
+    expiry_days = (app_config.invite.personal_invites.expiry_days
+                   if app_config else 7)
+    expires_at = datetime.datetime.utcnow() + datetime.timedelta(days=expiry_days)
+
+    code = generate_invite_code()
+    invite = InviteCode(
+        app_slug=wl.app_slug, code=code, code_type="bulk",
+        created_by_email=admin, max_uses=1, expires_at=expires_at,
+    )
+    db.add(invite)
+    await db.flush()
+
+    wl.status = "approved"
+    wl.invite_code_id = invite.id
+    wl.reviewed_at = datetime.datetime.utcnow()
+    wl.reviewed_by = admin
+    await db.commit()
+
+    return RedirectResponse(
+        url=f"/_auth/admin/invites?app_slug={wl.app_slug}", status_code=302
+    )
+
+
+@router.post("/invites/waitlist/{wl_id}/deny")
+async def deny_waitlist(
+    wl_id: int,
+    request: Request,
+    reason: str = Form(""),
+    db: AsyncSession = Depends(get_db),
+):
+    admin, redirect = _check_admin(await _require_admin(request, db))
+    if redirect:
+        return redirect
+
+    wl = await db.get(InviteWaitlist, wl_id)
+    if not wl or wl.status != "pending":
+        return RedirectResponse(url="/_auth/admin/invites", status_code=302)
+
+    wl.status = "denied"
+    wl.reason = reason or None
+    wl.reviewed_at = datetime.datetime.utcnow()
+    wl.reviewed_by = admin
+
+    # Add IP to blocklist
+    await block_ip(db, wl.ip_address, reason=f"Waitlist denied: {wl.email}", blocked_by=admin)
+
+    await db.commit()
+
+    return RedirectResponse(
+        url=f"/_auth/admin/invites?app_slug={wl.app_slug}", status_code=302
+    )

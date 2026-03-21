@@ -249,6 +249,18 @@ async def _handle_oauth_callback(
             status_code=403,
         )
 
+    # Check invite cookie (for linking invite use to email on sign-up)
+    invite_use_id = None
+    if app_config and app_config.invite.enabled:
+        if not (app_config.allowed_emails and email in app_config.allowed_emails):
+            from gatekeeper.auth.invites import verify_invite_cookie
+            invite_cookie = request.cookies.get("gk_invite_granted")
+            if invite_cookie:
+                invite_use_id = verify_invite_cookie(
+                    invite_cookie, _config.secret_key, app_slug,
+                    app_config.invite.cookie_max_age_days,
+                )
+
     # Check if OAuth account already linked
     stmt = select(OAuthAccount).where(
         OAuthAccount.provider == provider,
@@ -266,6 +278,15 @@ async def _handle_oauth_callback(
         user = result.scalar_one_or_none()
 
         if user is None:
+            # For invite-only apps, reject new users without a valid invite
+            if (app_config and app_config.invite.enabled and invite_use_id is None
+                    and not (app_config.allowed_emails and email in app_config.allowed_emails)):
+                return HTMLResponse(
+                    "<h2>Invite required</h2>"
+                    "<p>An invite code is required to create an account for this application.</p>",
+                    status_code=403,
+                )
+
             user = User(email=email, display_name=name)
             db.add(user)
             await db.flush()
@@ -287,6 +308,16 @@ async def _handle_oauth_callback(
         db.add(oauth_link)
         await db.commit()
         user_id = user.id
+
+    # Link invite use to this email if applicable
+    if invite_use_id:
+        from gatekeeper.models import InviteUse
+        invite_use = await db.scalar(
+            select(InviteUse).where(InviteUse.id == invite_use_id)
+        )
+        if invite_use and not invite_use.used_by_email:
+            invite_use.used_by_email = email
+            await db.commit()
 
     ip = _get_client_ip(request)
     session_token = await create_session(db, user_id, app_slug, ip)
