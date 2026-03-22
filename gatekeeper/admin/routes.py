@@ -452,6 +452,27 @@ async def admin_create_code(
     )
 
 
+@router.post("/invites/codes/{code_id}/revoke")
+async def revoke_code(
+    code_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    admin, redirect = _check_admin(await _require_admin(request, db))
+    if redirect:
+        return redirect
+
+    code = await db.get(InviteCode, code_id)
+    if code and code.active:
+        code.active = False
+        await db.commit()
+
+    return RedirectResponse(
+        url=f"/_auth/admin/invites?app_slug={code.app_slug if code else ''}",
+        status_code=302,
+    )
+
+
 @router.post("/invites/waitlist/{wl_id}/approve")
 async def approve_waitlist(
     wl_id: int,

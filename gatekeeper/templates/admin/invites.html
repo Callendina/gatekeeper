@@ -104,6 +104,7 @@
                     <th>Active</th>
                     <th>Expires</th>
                     <th>Created</th>
+                    <th>Actions</th>
                 </tr>
             </thead>
             <tbody>
@@ -127,10 +128,20 @@
                     <td>{{ 'Yes' if c.active else 'No' }}</td>
                     <td>{{ c.expires_at.strftime('%Y-%m-%d') if c.expires_at else '—' }}</td>
                     <td>{{ c.created_at.strftime('%Y-%m-%d %H:%M') if c.created_at else '' }}</td>
+                    <td>
+                        {% if c.active %}
+                        <form method="POST" action="/_auth/admin/invites/codes/{{ c.id }}/revoke" style="display:inline"
+                              onsubmit="return confirm('Revoke this code? Existing users are not affected.')">
+                            <button type="submit" class="btn-deny">Revoke</button>
+                        </form>
+                        {% else %}
+                        <span style="color:#999;">Revoked</span>
+                        {% endif %}
+                    </td>
                 </tr>
                 {% endfor %}
                 {% if not codes %}
-                <tr><td colspan="8" style="text-align:center; color:#999;">No invite codes</td></tr>
+                <tr><td colspan="9" style="text-align:center; color:#999;">No invite codes</td></tr>
                 {% endif %}
             </tbody>
         </table>
