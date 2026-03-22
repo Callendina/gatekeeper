@@ -226,8 +226,9 @@ async def join_waitlist(
 
     ip = _get_client_ip(request)
     email = email.strip().lower()
-    if not email:
-        return HTMLResponse("<h2>Email required</h2>", status_code=400)
+    if not email or "@" not in email or "." not in email.split("@")[-1] or len(email) > 254:
+        return _render_invite_page(request, app_slug, app_config, "/",
+                                   error="Please enter a valid email address.")
 
     existing = await db.scalar(
         select(InviteWaitlist).where(
