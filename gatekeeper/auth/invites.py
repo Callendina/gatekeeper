@@ -135,9 +135,9 @@ async def record_invite_use(db: AsyncSession, code_obj: InviteCode,
 # Public routes
 # ---------------------------------------------------------------------------
 
-@router.get("/invite")
-async def invite_page(request: Request, app: str = "", next: str = "/"):
-    app, app_config = _resolve_app(request, app)
+def _render_invite_page(request: Request, app: str, app_config, next: str,
+                        error: str = "") -> HTMLResponse:
+    """Render the invite page — custom HTML or default template."""
     app_name = app_config.name if app_config else "Application"
 
     if app_config and app_config.invite.invite_html_file:
@@ -152,6 +152,8 @@ async def invite_page(request: Request, app: str = "", next: str = "/"):
             html = html.replace("{{WAITLIST_SUBMIT_URL}}", waitlist_url)
             html = html.replace("{{LOGIN_URL}}",
                                 f"/_auth/login?app={app}&next={next}")
+            html = html.replace("{{ERROR}}", error)
+            html = html.replace("{{WAITLIST_CONFIRMED}}", "")
             return HTMLResponse(html)
         except FileNotFoundError:
             pass
@@ -162,7 +164,14 @@ async def invite_page(request: Request, app: str = "", next: str = "/"):
         "app_name": app_name,
         "next": next,
         "show_waitlist": app_config.invite.waitlist if app_config else False,
+        "error": error,
     })
+
+
+@router.get("/invite")
+async def invite_page(request: Request, app: str = "", next: str = "/"):
+    app, app_config = _resolve_app(request, app)
+    return _render_invite_page(request, app, app_config, next)
 
 
 @router.post("/invite/validate")
@@ -187,14 +196,8 @@ async def validate_invite(
             _invite_failures.pop(ip, None)
             return HTMLResponse("<h2>Blocked</h2><p>Too many invalid invite code attempts.</p>",
                                 status_code=403)
-        return templates.TemplateResponse("auth/invite.html", {
-            "request": request,
-            "app": app_slug,
-            "app_name": app_config.name,
-            "next": next,
-            "show_waitlist": app_config.invite.waitlist,
-            "error": "Invalid or expired invite code.",
-        })
+        return _render_invite_page(request, app_slug, app_config, next,
+                                   error="Invalid or expired invite code.")
 
     _invite_failures.pop(ip, None)  # Clear failures on success
     use = await record_invite_use(db, code_obj, None, ip)
@@ -240,6 +243,22 @@ async def join_waitlist(
         )
         db.add(entry)
         await db.commit()
+
+    # Render the invite page with waitlist confirmation message
+    if app_config and app_config.invite.invite_html_file:
+        try:
+            with open(app_config.invite.invite_html_file) as f:
+                html = f.read()
+            app_name = app_config.name
+            html = html.replace("{{APP_NAME}}", app_name)
+            html = html.replace("{{INVITE_SUBMIT_URL}}", "")
+            html = html.replace("{{WAITLIST_SUBMIT_URL}}", "")
+            html = html.replace("{{LOGIN_URL}}", "")
+            html = html.replace("{{ERROR}}", "")
+            html = html.replace("{{WAITLIST_CONFIRMED}}", "true")
+            return HTMLResponse(html)
+        except FileNotFoundError:
+            pass
 
     return templates.TemplateResponse("auth/invite_waitlist_confirm.html", {
         "request": request,
