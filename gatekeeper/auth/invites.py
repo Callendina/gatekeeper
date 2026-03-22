@@ -154,6 +154,7 @@ def _render_invite_page(request: Request, app: str, app_config, next: str,
                                 f"/_auth/login?app={app}&next={next}")
             html = html.replace("{{ERROR}}", error)
             html = html.replace("{{WAITLIST_CONFIRMED}}", "")
+            html = html.replace("{{WAITLIST_EMAIL}}", "")
             return HTMLResponse(html)
         except FileNotFoundError:
             pass
@@ -257,6 +258,7 @@ async def join_waitlist(
             html = html.replace("{{LOGIN_URL}}", "")
             html = html.replace("{{ERROR}}", "")
             html = html.replace("{{WAITLIST_CONFIRMED}}", "true")
+            html = html.replace("{{WAITLIST_EMAIL}}", email)
             return HTMLResponse(html)
         except FileNotFoundError:
             pass
@@ -264,6 +266,7 @@ async def join_waitlist(
     return templates.TemplateResponse("auth/invite_waitlist_confirm.html", {
         "request": request,
         "app_name": app_config.name,
+        "email": email,
     })
 
 
