@@ -48,8 +48,11 @@ def _resolve_app(request: Request, app: str) -> tuple[str, AppConfig | None]:
 # ---------------------------------------------------------------------------
 
 def generate_invite_code() -> str:
-    """Generate a short, URL-safe invite code."""
-    return secrets.token_urlsafe(12)
+    """Generate a human-friendly invite code in XXXX-XXXX format."""
+    chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # no I/O/0/1 to avoid ambiguity
+    part1 = "".join(secrets.choice(chars) for _ in range(4))
+    part2 = "".join(secrets.choice(chars) for _ in range(4))
+    return f"{part1}-{part2}"
 
 
 def sign_invite_cookie(invite_use_id: int, code_id: int, timestamp: int,
@@ -89,11 +92,12 @@ def verify_invite_cookie(cookie_value: str, secret_key: str,
 
 async def validate_invite_code_db(db: AsyncSession, app_slug: str,
                                   code_str: str) -> InviteCode | None:
-    """Look up a valid, active, non-expired, non-exhausted invite code."""
+    """Look up a valid, active, non-expired, non-exhausted invite code (case-insensitive)."""
     now = datetime.datetime.utcnow()
+    from sqlalchemy import func as sa_func
     stmt = select(InviteCode).where(
         InviteCode.app_slug == app_slug,
-        InviteCode.code == code_str,
+        sa_func.upper(InviteCode.code) == code_str.upper(),
         InviteCode.active == True,
     )
     result = await db.execute(stmt)
