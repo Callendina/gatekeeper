@@ -84,6 +84,12 @@ def _check_admin(result):
     return None, result
 
 
+async def _pending_waitlist_count(db: AsyncSession) -> int:
+    return await db.scalar(
+        select(func.count(InviteWaitlist.id)).where(InviteWaitlist.status == "pending")
+    ) or 0
+
+
 @router.get("")
 async def admin_dashboard(request: Request, db: AsyncSession = Depends(get_db)):
     admin, redirect = _check_admin(await _require_admin(request, db))
@@ -100,14 +106,18 @@ async def admin_dashboard(request: Request, db: AsyncSession = Depends(get_db)):
         if _config.apps[slug].api_access.enabled:
             api_key_counts[slug] = await count_active_keys(db, slug)
 
+    pending_waitlist = await _pending_waitlist_count(db)
+
     return templates.TemplateResponse("admin/dashboard.html", {
         "request": request,
         "user_count": user_count,
         "blocked_count": blocked_count,
         "apps": _config.apps,
         "api_key_counts": api_key_counts,
+        "pending_waitlist": pending_waitlist,
         "admin_email": admin,
         "environment": _config.environment,
+        "pending_waitlist": await _pending_waitlist_count(db),
     })
 
 
@@ -135,6 +145,7 @@ async def list_users(request: Request, db: AsyncSession = Depends(get_db)):
         "apps": _config.apps,
         "admin_email": admin,
         "environment": _config.environment,
+        "pending_waitlist": await _pending_waitlist_count(db),
     })
 
 
@@ -182,6 +193,7 @@ async def ip_blocklist_page(request: Request, db: AsyncSession = Depends(get_db)
         "blocked_ips": blocked,
         "admin_email": admin,
         "environment": _config.environment,
+        "pending_waitlist": await _pending_waitlist_count(db),
     })
 
 
@@ -251,6 +263,7 @@ async def access_log_page(
         "apps": _config.apps,
         "admin_email": admin,
         "environment": _config.environment,
+        "pending_waitlist": await _pending_waitlist_count(db),
     })
 
 
@@ -335,6 +348,7 @@ async def api_keys_page(
         "apps": _config.apps,
         "admin_email": admin,
         "environment": _config.environment,
+        "pending_waitlist": await _pending_waitlist_count(db),
     })
 
 
@@ -416,6 +430,7 @@ async def invites_page(
         "apps": _config.apps,
         "admin_email": admin,
         "environment": _config.environment,
+        "pending_waitlist": await _pending_waitlist_count(db),
     })
 
 
