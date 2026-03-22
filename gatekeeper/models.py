@@ -198,3 +198,16 @@ class InviteWaitlist(Base):
     __table_args__ = (
         Index("ix_waitlist_app_email", "app_slug", "email", unique=True),
     )
+
+
+class InviteUserLimit(Base):
+    __tablename__ = "invite_user_limits"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    app_slug: Mapped[str] = mapped_column(String(100), nullable=False)
+    max_invites: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    __table_args__ = (
+        Index("ix_invite_user_limit", "user_id", "app_slug", unique=True),
+    )

@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from gatekeeper.database import get_db
 from gatekeeper.config import GatekeeperConfig, AppConfig
-from gatekeeper.models import InviteCode, InviteUse, InviteWaitlist
+from gatekeeper.models import InviteCode, InviteUse, InviteWaitlist, InviteUserLimit, User
 from gatekeeper.auth.sessions import validate_session
 from gatekeeper.middleware.ip_block import block_ip
 
@@ -129,6 +129,18 @@ async def record_invite_use(db: AsyncSession, code_obj: InviteCode,
     code_obj.use_count += 1
     await db.commit()
     return use
+
+
+async def get_user_invite_limit(db: AsyncSession, user_id: int,
+                                app_slug: str, default: int) -> int:
+    """Get the effective invite limit for a user (per-user override or app default)."""
+    override = await db.scalar(
+        select(InviteUserLimit.max_invites).where(
+            InviteUserLimit.user_id == user_id,
+            InviteUserLimit.app_slug == app_slug,
+        )
+    )
+    return override if override is not None else default
 
 
 # ---------------------------------------------------------------------------
@@ -297,16 +309,19 @@ async def create_personal_invite(
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
 
     pi = app_config.invite.personal_invites
+    max_allowed = await get_user_invite_limit(
+        db, user.id, app_config.slug, pi.max_per_user
+    )
     count = await db.scalar(
         select(func.count(InviteCode.id)).where(
             InviteCode.app_slug == app_config.slug,
             InviteCode.code_type == "personal",
             InviteCode.created_by_email == user.email,
         )
-    )
-    if (count or 0) >= pi.max_per_user:
+    ) or 0
+    if count >= max_allowed:
         return JSONResponse({
-            "error": f"Maximum personal invites ({pi.max_per_user}) reached",
+            "error": f"Maximum personal invites ({max_allowed}) reached",
         }, status_code=429)
 
     code = generate_invite_code()
@@ -329,11 +344,12 @@ async def create_personal_invite(
     })
 
 
-@router.get("/invite/mine")
-async def my_invites(
+@router.get("/invite/status")
+async def invite_status(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
+    """Return the current user's invite status: counts, unused codes, and remaining capacity."""
     host = request.headers.get("host", "")
     app_config = _config.app_for_domain(host)
     if not app_config:
@@ -347,6 +363,12 @@ async def my_invites(
     if user is None:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
 
+    pi = app_config.invite.personal_invites
+    max_allowed = await get_user_invite_limit(
+        db, user.id, app_config.slug, pi.max_per_user
+    )
+
+    # Get all personal codes by this user
     stmt = (
         select(InviteCode)
         .where(
@@ -359,26 +381,49 @@ async def my_invites(
     result = await db.execute(stmt)
     codes = result.scalars().all()
 
-    invite_list = []
+    now = datetime.datetime.utcnow()
+    total_created = len(codes)
+    used_codes = []
+    unused_codes = []
+
     for c in codes:
-        uses_result = await db.execute(
-            select(InviteUse).where(InviteUse.invite_code_id == c.id)
-        )
-        uses = uses_result.scalars().all()
-        invite_list.append({
+        code_info = {
             "code": c.code,
-            "max_uses": c.max_uses,
-            "use_count": c.use_count,
             "active": c.active,
             "expires_at": c.expires_at.isoformat() + "Z" if c.expires_at else None,
             "created_at": c.created_at.isoformat() + "Z",
-            "used_by": [
+        }
+        expired = c.expires_at and c.expires_at < now
+        if c.use_count > 0:
+            # Fetch who used it
+            uses_result = await db.execute(
+                select(InviteUse).where(InviteUse.invite_code_id == c.id)
+            )
+            uses = uses_result.scalars().all()
+            code_info["used_by"] = [
                 {"email": u.used_by_email, "at": u.granted_at.isoformat() + "Z"}
                 for u in uses
-            ],
-        })
+            ]
+            used_codes.append(code_info)
+        elif not c.active or expired:
+            # Expired or revoked but never used — still counts towards total
+            code_info["status"] = "expired" if expired else "revoked"
+            used_codes.append(code_info)
+        else:
+            unused_codes.append(code_info)
 
-    return JSONResponse({"invites": invite_list})
+    remaining = max(0, max_allowed - total_created)
+
+    return JSONResponse({
+        "total_created": total_created,
+        "total_used": len(used_codes),
+        "total_unused": len(unused_codes),
+        "remaining": remaining,
+        "max_allowed": max_allowed,
+        "unused_codes": unused_codes,
+        "used_codes": used_codes,
+        "personal_invites_enabled": pi.enabled,
+    })
 
 
 # ---------------------------------------------------------------------------

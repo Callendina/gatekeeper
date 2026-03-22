@@ -199,6 +199,45 @@
                 {% endif %}
             </tbody>
         </table>
+        <!-- Grant invite slots -->
+        <h3>Grant Invite Slots to Users</h3>
+        <form class="create-form" method="POST" action="/_auth/admin/invites/grant">
+            <div class="field">
+                <label>App</label>
+                <select name="app_slug" required>
+                    {% for slug, app in apps.items() %}
+                    <option value="{{ slug }}" {{ 'selected' if slug == filter_app }}>{{ app.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="field">
+                <label>Users (hold Ctrl to select multiple)</label>
+                <select name="user_ids" id="user-select" multiple size="6" style="min-width:250px;">
+                    {% for u in all_users %}
+                    <option value="{{ u.id }}">{{ u.email }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="field">
+                <label>Additional invites</label>
+                <input type="number" name="additional_invites" value="5" min="1">
+            </div>
+            <button type="submit" class="btn-create">Grant</button>
+        </form>
+        <script>
+            // Convert multi-select values to comma-separated hidden field
+            document.querySelector('form[action$="/invites/grant"]').addEventListener('submit', function(e) {
+                var sel = document.getElementById('user-select');
+                var ids = Array.from(sel.selectedOptions).map(o => o.value).join(',');
+                // Replace the select with a hidden input
+                var hidden = document.createElement('input');
+                hidden.type = 'hidden';
+                hidden.name = 'user_ids';
+                hidden.value = ids;
+                sel.removeAttribute('name');
+                this.appendChild(hidden);
+            });
+        </script>
     </div>
 </body>
 </html>

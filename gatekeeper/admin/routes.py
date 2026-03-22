@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from gatekeeper.database import get_db
 from gatekeeper.config import GatekeeperConfig
-from gatekeeper.models import User, UserAppRole, IPBlocklist, AccessLog, Session, APIKey, InviteCode, InviteUse, InviteWaitlist
+from gatekeeper.models import User, UserAppRole, IPBlocklist, AccessLog, Session, APIKey, InviteCode, InviteUse, InviteWaitlist, InviteUserLimit
 from gatekeeper.middleware.ip_block import block_ip, unblock_ip
 from gatekeeper.auth.sessions import validate_session
 
@@ -421,6 +421,10 @@ async def invites_page(
         )
         code_uses[c.id] = uses_result.scalars().all()
 
+    # Load users for the grant form
+    users_result = await db.execute(select(User).order_by(User.email))
+    all_users = users_result.scalars().all()
+
     return templates.TemplateResponse("admin/invites.html", {
         "request": request,
         "codes": codes,
@@ -428,6 +432,7 @@ async def invites_page(
         "waitlist": waitlist,
         "filter_app": app_slug,
         "apps": _config.apps,
+        "all_users": all_users,
         "admin_email": admin,
         "environment": _config.environment,
         "pending_waitlist": await _pending_waitlist_count(db),
@@ -555,4 +560,49 @@ async def deny_waitlist(
 
     return RedirectResponse(
         url=f"/_auth/admin/invites?app_slug={wl.app_slug}", status_code=302
+    )
+
+
+@router.post("/invites/grant")
+async def grant_invite_slots(
+    request: Request,
+    app_slug: str = Form(...),
+    user_ids: str = Form(""),
+    additional_invites: int = Form(5),
+    db: AsyncSession = Depends(get_db),
+):
+    """Grant additional personal invite capacity to selected users."""
+    admin, redirect = _check_admin(await _require_admin(request, db))
+    if redirect:
+        return redirect
+
+    from gatekeeper.auth.invites import get_user_invite_limit
+
+    app_config = _config.apps.get(app_slug)
+    default_limit = (app_config.invite.personal_invites.max_per_user
+                     if app_config else 5)
+
+    ids = [int(uid.strip()) for uid in user_ids.split(",") if uid.strip().isdigit()]
+
+    for uid in ids:
+        current_limit = await get_user_invite_limit(db, uid, app_slug, default_limit)
+        new_limit = current_limit + additional_invites
+
+        existing = await db.scalar(
+            select(InviteUserLimit).where(
+                InviteUserLimit.user_id == uid,
+                InviteUserLimit.app_slug == app_slug,
+            )
+        )
+        if existing:
+            existing.max_invites = new_limit
+        else:
+            db.add(InviteUserLimit(
+                user_id=uid, app_slug=app_slug, max_invites=new_limit,
+            ))
+
+    await db.commit()
+
+    return RedirectResponse(
+        url=f"/_auth/admin/invites?app_slug={app_slug}", status_code=302
     )
