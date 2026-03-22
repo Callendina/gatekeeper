@@ -13,12 +13,19 @@ from gatekeeper.database import get_db
 from gatekeeper.config import GatekeeperConfig, AppConfig
 from gatekeeper.models import InviteCode, InviteUse, InviteWaitlist
 from gatekeeper.auth.sessions import validate_session
+from gatekeeper.middleware.ip_block import block_ip
 
 from pathlib import Path
 
 router = APIRouter(prefix="/_auth")
 _config: GatekeeperConfig = None
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
+
+
+INVITE_FAIL_LIMIT = 50
+
+# In-memory tracker: {ip: fail_count}
+_invite_failures: dict[str, int] = {}
 
 
 def init_invite_routes(config: GatekeeperConfig):
@@ -173,6 +180,13 @@ async def validate_invite(
     ip = _get_client_ip(request)
     code_obj = await validate_invite_code_db(db, app_slug, code.strip())
     if code_obj is None:
+        _invite_failures[ip] = _invite_failures.get(ip, 0) + 1
+        if _invite_failures[ip] >= INVITE_FAIL_LIMIT:
+            await block_ip(db, ip, reason="Exceeded invite code attempt limit",
+                           blocked_by="gatekeeper-auto")
+            _invite_failures.pop(ip, None)
+            return HTMLResponse("<h2>Blocked</h2><p>Too many invalid invite code attempts.</p>",
+                                status_code=403)
         return templates.TemplateResponse("auth/invite.html", {
             "request": request,
             "app": app_slug,
@@ -182,6 +196,7 @@ async def validate_invite(
             "error": "Invalid or expired invite code.",
         })
 
+    _invite_failures.pop(ip, None)  # Clear failures on success
     use = await record_invite_use(db, code_obj, None, ip)
 
     response = RedirectResponse(url=next, status_code=302)

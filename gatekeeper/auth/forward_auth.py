@@ -24,7 +24,7 @@ from gatekeeper.middleware.paywall import check_paywall, record_new_session, Pay
 from gatekeeper.auth.api_keys import validate_api_key
 from gatekeeper.auth.invites import (
     verify_invite_cookie, validate_invite_code_db, record_invite_use,
-    make_invite_cookie,
+    make_invite_cookie, _invite_failures, INVITE_FAIL_LIMIT,
 )
 from gatekeeper.models import AccessLog
 
@@ -90,6 +90,7 @@ async def _check_invite_gate(request: Request, db, app, ip: str,
     if code_str:
         code_obj = await validate_invite_code_db(db, app.slug, code_str)
         if code_obj:
+            _invite_failures.pop(ip, None)
             use = await record_invite_use(db, code_obj, None, ip)
             # Redirect to clean URL (strip invite param) with cookie set
             remaining_qs = {k: v for k, v in qs.items() if k != app.invite.url_param}
@@ -107,6 +108,16 @@ async def _check_invite_gate(request: Request, db, app, ip: str,
             )
             await _log(db, ip, app.slug, path, method, None, "invite_granted")
             return response
+        else:
+            # Invalid code in URL param
+            _invite_failures[ip] = _invite_failures.get(ip, 0) + 1
+            if _invite_failures[ip] >= INVITE_FAIL_LIMIT:
+                from gatekeeper.middleware.ip_block import block_ip
+                await block_ip(db, ip, reason="Exceeded invite code attempt limit",
+                               blocked_by="gatekeeper-auto")
+                _invite_failures.pop(ip, None)
+                await _log(db, ip, app.slug, path, method, None, "blocked")
+                return Response(status_code=403, content="Blocked")
 
     # No valid invite — redirect to invite page
     await _log(db, ip, app.slug, path, method, None, "invite_required")
