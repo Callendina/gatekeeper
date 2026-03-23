@@ -271,7 +271,7 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
     # 6. Check paywall for anonymous users for anonymous users
     nag_dismissed = request.cookies.get("gk_nag_dismissed") == "1"
 
-    if user is None and app.paywall.enabled:
+    if user is None and app.paywall.enabled and not is_exempt:
         pw_result = await check_paywall(db, ip, app, session_token=session_token)
         if pw_result == PaywallResult.BLOCKED:
             await _log(db, ip, app.slug, path, method, None, "paywall")
@@ -283,7 +283,7 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
             return Response(status_code=302, headers={"Location": nag_url})
 
     # 7. Create anonymous session if none exists (for tracking)
-    if session is None and app.paywall.enabled:
+    if session is None and app.paywall.enabled and not is_exempt:
         # Record the new session for paywall counting
         pw_result = await record_new_session(db, ip, app)
         if pw_result == PaywallResult.BLOCKED:
