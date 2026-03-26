@@ -67,6 +67,10 @@ async def _check_invite_gate(request: Request, db, app, ip: str,
                              referrer: str | None = None,
                              user_agent: str | None = None):
     """Check invite gate. Returns a Response to send, or None to continue."""
+    # Public paths bypass the invite gate entirely
+    if app.invite.public_paths and _path_matches_any(path, app.invite.public_paths):
+        return None
+
     # Authenticated users with valid sessions always pass
     if session_token:
         _sess, _usr, _role = await validate_session(db, session_token, app.slug)

@@ -102,6 +102,7 @@ class InviteConfig:
     waitlist: bool = False
     url_param: str = "invite"
     cookie_max_age_days: int = 30
+    public_paths: list[str] = field(default_factory=list)
     personal_invites: PersonalInviteConfig = field(default_factory=PersonalInviteConfig)
 
     @property
@@ -197,6 +198,7 @@ def _parse_app_config(slug: str, app_raw: dict) -> AppConfig:
         waitlist=invite_raw.get("waitlist", False),
         url_param=invite_raw.get("url_param", "invite"),
         cookie_max_age_days=invite_raw.get("cookie_max_age_days", 30),
+        public_paths=invite_raw.get("public_paths", []),
         personal_invites=PersonalInviteConfig(
             enabled=pi_raw.get("enabled", True),
             max_per_user=pi_raw.get("max_per_user", 5),
