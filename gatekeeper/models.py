@@ -140,6 +140,9 @@ class AccessLog(Base):
     method: Mapped[str] = mapped_column(String(10), nullable=False)
     user_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False)  # allowed, blocked, rate_limited, paywall
+    session_token: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    referrer: Mapped[str | None] = mapped_column(Text, nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class InviteCode(Base):

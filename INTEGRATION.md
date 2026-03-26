@@ -354,6 +354,21 @@ myapp.example.com {
 
 For apps with API key support, also add `header_up X-Forwarded-API-Key {header.X-API-Key}` inside the `forward_auth` block.
 
+### Analytics headers (optional)
+
+To enable referrer and user-agent tracking in gatekeeper's analytics dashboard, add these headers to the `forward_auth` block:
+
+```caddyfile
+forward_auth localhost:9100 {
+    uri /_auth/verify
+    copy_headers X-Gatekeeper-User X-Gatekeeper-Role X-Gatekeeper-System-Admin
+    header_up X-Forwarded-User-Agent {http.request.header.User-Agent}
+    header_up X-Forwarded-Referer {http.request.header.Referer}
+}
+```
+
+Without these, session tracking and duration still work, but the referrer and user-agent columns in analytics will be empty.
+
 ## Migration Checklist
 
 - [ ] Add your app config: either in gatekeeper's `config.yaml` under `apps:`, or as a fragment at `config.d/<app-slug>.yaml` (see `config.d.example/` for format)

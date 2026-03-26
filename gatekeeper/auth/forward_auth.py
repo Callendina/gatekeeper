@@ -62,10 +62,12 @@ def _has_invite_grant(request: Request, app) -> bool:
 
 
 async def _check_invite_gate(request: Request, db, app, ip: str,
-                             path: str, method: str):
+                             path: str, method: str,
+                             session_token: str | None = None,
+                             referrer: str | None = None,
+                             user_agent: str | None = None):
     """Check invite gate. Returns a Response to send, or None to continue."""
     # Authenticated users with valid sessions always pass
-    session_token = request.cookies.get("gk_session")
     if session_token:
         _sess, _usr, _role = await validate_session(db, session_token, app.slug)
         if _usr is not None:
@@ -106,7 +108,8 @@ async def _check_invite_gate(request: Request, db, app, ip: str,
                 httponly=True, secure=True, samesite="lax",
                 max_age=app.invite.cookie_max_age_days * 86400,
             )
-            await _log(db, ip, app.slug, path, method, None, "invite_granted")
+            await _log(db, ip, app.slug, path, method, None, "invite_granted",
+                       session_token=session_token, referrer=referrer, user_agent=user_agent)
             return response
         else:
             # Invalid code in URL param
@@ -116,11 +119,13 @@ async def _check_invite_gate(request: Request, db, app, ip: str,
                 await block_ip(db, ip, reason="Exceeded invite code attempt limit",
                                blocked_by="gatekeeper-auto")
                 _invite_failures.pop(ip, None)
-                await _log(db, ip, app.slug, path, method, None, "blocked")
+                await _log(db, ip, app.slug, path, method, None, "blocked",
+                           session_token=session_token, referrer=referrer, user_agent=user_agent)
                 return Response(status_code=403, content="Blocked")
 
     # No valid invite — redirect to invite page
-    await _log(db, ip, app.slug, path, method, None, "invite_required")
+    await _log(db, ip, app.slug, path, method, None, "invite_required",
+               session_token=session_token, referrer=referrer, user_agent=user_agent)
     invite_url = f"/_auth/invite?app={app.slug}&next={path}"
     return Response(status_code=302, headers={"Location": invite_url})
 
@@ -132,25 +137,30 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
     host = request.headers.get("x-forwarded-host", "")
     path = request.headers.get("x-forwarded-uri", "/")
     method = request.headers.get("x-forwarded-method", "GET")
+    referrer = request.headers.get("x-forwarded-referer", "") or request.headers.get("referer", "") or None
+    user_agent = request.headers.get("x-forwarded-user-agent", "") or request.headers.get("user-agent", "") or None
+    session_token = request.cookies.get("gk_session")
 
     # Resolve which app this request is for
     app = _config.app_for_domain(host)
     if app is None:
         return Response(status_code=403, content="Unknown app")
 
+    # Common extra fields for logging
+    _extra = dict(session_token=session_token, referrer=referrer, user_agent=user_agent)
+
     # 1. Check IP blocklist
     if await is_ip_blocked(db, ip):
-        await _log(db, ip, app.slug, path, method, None, "blocked")
+        await _log(db, ip, app.slug, path, method, None, "blocked", **_extra)
         return Response(status_code=403, content="Blocked")
 
     # 2. Invite gate (only for invite_only apps)
     if app.invite.enabled:
-        invite_response = await _check_invite_gate(request, db, app, ip, path, method)
+        invite_response = await _check_invite_gate(request, db, app, ip, path, method, **_extra)
         if invite_response is not None:
             return invite_response
 
     # 3. Validate session early
-    session_token = request.cookies.get("gk_session")
     session, user, role = None, None, None
     if session_token:
         session, user, role = await validate_session(db, session_token, app.slug)
@@ -158,7 +168,7 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
     # 3. Check rate limit (per-app, authenticated users may get a higher limit)
     rl_ok, rl_count, rl_limit = check_rate_limit(ip, app.rate_limit, authenticated=user is not None)
     if not rl_ok:
-        await _log(db, ip, app.slug, path, method, None, "rate_limited")
+        await _log(db, ip, app.slug, path, method, None, "rate_limited", **_extra)
         return Response(
             status_code=429,
             content=json.dumps({
@@ -179,7 +189,7 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
         # API paths in key_required mode: must have a valid X-API-Key
         api_key_header = request.headers.get("x-forwarded-api-key", "")
         if not api_key_header:
-            await _log(db, ip, app.slug, path, method, None, "api_key_missing")
+            await _log(db, ip, app.slug, path, method, None, "api_key_missing", **_extra)
             return Response(
                 status_code=401,
                 content="API key required. See /_auth/api-key for details.",
@@ -187,7 +197,7 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
 
         api_key_obj, api_user, api_role = await validate_api_key(db, api_key_header, app.slug)
         if api_key_obj is None:
-            await _log(db, ip, app.slug, path, method, None, "api_key_invalid")
+            await _log(db, ip, app.slug, path, method, None, "api_key_invalid", **_extra)
             return Response(status_code=401, content="Invalid or expired API key")
 
         # Per-key rate limit (override takes precedence if set)
@@ -210,7 +220,7 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
 
         krl_ok, krl_count, krl_limit = check_api_key_rate_limit(api_key_obj.key, key_limit, weight=path_weight)
         if not krl_ok:
-            await _log(db, ip, app.slug, path, method, None, "api_key_rate_limited")
+            await _log(db, ip, app.slug, path, method, None, "api_key_rate_limited", **_extra)
             tier = "registered" if api_key_obj.key_type == "registered" else (
                 "temp_authenticated" if api_key_obj.user_id else "temp_anonymous"
             )
@@ -230,7 +240,7 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
         if api_key_obj.key_type == "temp" and api_key_obj.user_id is None and app.paywall.enabled:
             paywall_ok = await check_paywall(db, ip, app, session_token=None)
             if not paywall_ok:
-                await _log(db, ip, app.slug, path, method, None, "paywall")
+                await _log(db, ip, app.slug, path, method, None, "paywall", **_extra)
                 return Response(status_code=403, content="Usage limit exceeded. Please register.")
 
         # Auto-extend temp keys on use
@@ -250,18 +260,18 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
             response.headers["X-Gatekeeper-Role"] = api_role or ""
             if api_user.is_system_admin:
                 response.headers["X-Gatekeeper-System-Admin"] = "true"
-            await _log(db, ip, app.slug, path, method, api_user.email, "allowed")
+            await _log(db, ip, app.slug, path, method, api_user.email, "allowed", **_extra)
         else:
             response.headers["X-Gatekeeper-User"] = ""
             response.headers["X-Gatekeeper-Role"] = ""
-            await _log(db, ip, app.slug, path, method, None, "allowed")
+            await _log(db, ip, app.slug, path, method, None, "allowed", **_extra)
         return response
 
     # 5. If path requires auth and user is not authenticated
     is_protected = _path_matches_any(path, app.protected_paths)
 
     if is_protected and user is None:
-        await _log(db, ip, app.slug, path, method, None, "auth_required")
+        await _log(db, ip, app.slug, path, method, None, "auth_required", **_extra)
         login_url = f"/_auth/login?app={app.slug}&next={path}"
         return Response(
             status_code=302,
@@ -274,11 +284,11 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
     if user is None and app.paywall.enabled and not is_exempt:
         pw_result = await check_paywall(db, ip, app, session_token=session_token)
         if pw_result == PaywallResult.BLOCKED:
-            await _log(db, ip, app.slug, path, method, None, "paywall")
+            await _log(db, ip, app.slug, path, method, None, "paywall", **_extra)
             login_url = f"/_auth/login?app={app.slug}&next={path}"
             return Response(status_code=302, headers={"Location": login_url})
         if pw_result == PaywallResult.NAG and not nag_dismissed:
-            await _log(db, ip, app.slug, path, method, None, "paywall_nag")
+            await _log(db, ip, app.slug, path, method, None, "paywall_nag", **_extra)
             nag_url = f"/_auth/nag?app={app.slug}&next={path}"
             return Response(status_code=302, headers={"Location": nag_url})
 
@@ -287,11 +297,11 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
         # Record the new session for paywall counting
         pw_result = await record_new_session(db, ip, app)
         if pw_result == PaywallResult.BLOCKED:
-            await _log(db, ip, app.slug, path, method, None, "paywall")
+            await _log(db, ip, app.slug, path, method, None, "paywall", **_extra)
             login_url = f"/_auth/login?app={app.slug}&next={path}"
             return Response(status_code=302, headers={"Location": login_url})
         if pw_result == PaywallResult.NAG and not nag_dismissed:
-            await _log(db, ip, app.slug, path, method, None, "paywall_nag")
+            await _log(db, ip, app.slug, path, method, None, "paywall_nag", **_extra)
             nag_url = f"/_auth/nag?app={app.slug}&next={path}"
             return Response(status_code=302, headers={"Location": nag_url})
 
@@ -304,7 +314,8 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
         )
         response.headers["X-Gatekeeper-User"] = ""
         response.headers["X-Gatekeeper-Role"] = ""
-        await _log(db, ip, app.slug, path, method, None, "allowed")
+        await _log(db, ip, app.slug, path, method, None, "allowed",
+                   session_token=token, referrer=referrer, user_agent=user_agent)
         return response
 
     # 8. Allowed — return user info headers
@@ -318,17 +329,21 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
         response.headers["X-Gatekeeper-User"] = ""
         response.headers["X-Gatekeeper-Role"] = ""
 
-    await _log(db, ip, app.slug, path, method, user.email if user else None, "allowed")
+    await _log(db, ip, app.slug, path, method, user.email if user else None, "allowed", **_extra)
     return response
 
 
 async def _log(
     db: AsyncSession, ip: str, app_slug: str, path: str,
-    method: str, user_email: str | None, status: str
+    method: str, user_email: str | None, status: str,
+    session_token: str | None = None, referrer: str | None = None,
+    user_agent: str | None = None,
 ):
     log = AccessLog(
         ip_address=ip, app_slug=app_slug, path=path,
         method=method, user_email=user_email, status=status,
+        session_token=session_token, referrer=referrer,
+        user_agent=user_agent,
     )
     db.add(log)
     await db.commit()

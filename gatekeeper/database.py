@@ -21,6 +21,9 @@ async def init_db(database_path: str):
 
         # Migrate: add columns that may be missing from older databases
         await _add_column_if_missing(conn, "api_keys", "rate_limit_override", "INTEGER DEFAULT 0")
+        await _add_column_if_missing(conn, "access_log", "session_token", "VARCHAR(255)")
+        await _add_column_if_missing(conn, "access_log", "referrer", "TEXT")
+        await _add_column_if_missing(conn, "access_log", "user_agent", "TEXT")
 
 
 async def _add_column_if_missing(conn, table: str, column: str, col_type: str):

@@ -82,7 +82,7 @@ gatekeeper/
     rate_limit.py     - In-memory sliding window rate limiter
     paywall.py        - Anonymous usage tracking (allowed/nag/blocked)
   admin/
-    routes.py         - Admin UI routes (users, IP blocklist, access log)
+    routes.py         - Admin UI routes (users, IP blocklist, access log, analytics)
   templates/          - Jinja2 HTML templates
 config.d/             - Per-app config fragments (gitignored)
 config.d.example/     - Example app config fragment
@@ -209,7 +209,8 @@ invite:
 - **Session cookies** are named `gk_session`, set httponly/secure/samesite=lax.
 - **Nag dismissal cookie** is `gk_nag_dismissed`, lasts 1 hour.
 - **Admin UI** is at `/_auth/admin` on any app domain (or a dedicated gatekeeper domain). Only accessible to users with `is_system_admin=True`. Admin auth validates the session cookie directly (not via headers) since `/_auth/*` bypasses forward_auth.
-- **Access log** is stored in SQLite — this is the log admins review to block IPs. It is NOT a replacement for Caddy's access log.
+- **Access log** is stored in SQLite — this is the log admins review to block IPs. It is NOT a replacement for Caddy's access log. Each log entry also stores `session_token`, `referrer`, and `user_agent` for analytics.
+- **Analytics** are at `/_auth/admin/analytics`. Shows daily session counts, per-session detail (IP, signed-in status, duration, referrer, user agent). Filterable by app and time range.
 - **OAuth callbacks redirect to origin host** — if a user starts login from `gatekeeper.callendina.com`, they're redirected back there after OAuth, not to the app's domain.
 
 ## Status and monitoring endpoints

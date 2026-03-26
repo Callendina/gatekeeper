@@ -606,3 +606,105 @@ async def grant_invite_slots(
     return RedirectResponse(
         url=f"/_auth/admin/invites?app_slug={app_slug}", status_code=302
     )
+
+
+# --- Analytics ---
+
+
+@router.get("/analytics")
+async def analytics_page(
+    request: Request,
+    app_slug: str = "",
+    days: int = 7,
+    db: AsyncSession = Depends(get_db),
+):
+    admin, redirect = _check_admin(await _require_admin(request, db))
+    if redirect:
+        return redirect
+
+    days = min(max(days, 1), 90)
+    cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=days)
+
+    # Build base filter
+    filters = [AccessLog.timestamp >= cutoff]
+    if app_slug:
+        filters.append(AccessLog.app_slug == app_slug)
+
+    # -- Daily summary: unique sessions per day --
+    date_expr = func.date(AccessLog.timestamp).label("day")
+    daily_stmt = (
+        select(
+            date_expr,
+            func.count(func.distinct(AccessLog.session_token)).label("unique_sessions"),
+            func.count(func.distinct(AccessLog.ip_address)).label("unique_ips"),
+            func.count(AccessLog.id).label("total_requests"),
+            func.count(func.distinct(AccessLog.user_email)).label("unique_users"),
+        )
+        .where(*filters)
+        .group_by(date_expr)
+        .order_by(desc(date_expr))
+    )
+    daily_rows = (await db.execute(daily_stmt)).all()
+
+    # -- Per-session detail for the selected period --
+    session_stmt = (
+        select(
+            AccessLog.session_token,
+            AccessLog.ip_address,
+            AccessLog.user_email,
+            func.min(AccessLog.timestamp).label("first_seen"),
+            func.max(AccessLog.timestamp).label("last_seen"),
+            func.count(AccessLog.id).label("request_count"),
+            func.min(AccessLog.referrer).label("referrer"),
+            func.min(AccessLog.user_agent).label("user_agent"),
+            AccessLog.app_slug,
+        )
+        .where(*filters, AccessLog.session_token.isnot(None))
+        .group_by(AccessLog.session_token)
+        .order_by(desc(func.max(AccessLog.timestamp)))
+        .limit(500)
+    )
+    session_rows = (await db.execute(session_stmt)).all()
+
+    sessions = []
+    for row in session_rows:
+        first = row.first_seen
+        last = row.last_seen
+        if first and last:
+            duration_secs = (last - first).total_seconds()
+            if duration_secs < 60:
+                duration = f"{int(duration_secs)}s"
+            elif duration_secs < 3600:
+                duration = f"{int(duration_secs // 60)}m"
+            else:
+                hours = int(duration_secs // 3600)
+                mins = int((duration_secs % 3600) // 60)
+                duration = f"{hours}h{mins}m"
+        else:
+            duration = "-"
+
+        sessions.append({
+            "token_short": (row.session_token or "")[:12] + "...",
+            "ip": row.ip_address,
+            "user_email": row.user_email,
+            "signed_in": bool(row.user_email),
+            "first_seen": first,
+            "last_seen": last,
+            "duration": duration,
+            "requests": row.request_count,
+            "referrer": row.referrer,
+            "user_agent": row.user_agent,
+            "app_slug": row.app_slug,
+        })
+
+    return templates.TemplateResponse("admin/analytics.html", {
+        "request": request,
+        "daily_rows": daily_rows,
+        "sessions": sessions,
+        "filter_app": app_slug,
+        "filter_days": days,
+        "apps": _config.apps,
+        "admin_email": admin,
+        "environment": _config.environment,
+        "pending_waitlist": await _pending_waitlist_count(db),
+    })
