@@ -90,7 +90,7 @@
             <tbody>
                 {% for log in logs %}
                 <tr>
-                    <td>{{ log.timestamp.strftime('%m-%d %H:%M:%S') }}</td>
+                    <td class="local-time" data-utc="{{ log.timestamp.strftime('%Y-%m-%dT%H:%M:%SZ') }}">{{ log.timestamp.strftime('%m-%d %H:%M:%S') }}</td>
                     <td>{{ log.ip_address }}</td>
                     <td>{{ log.app_slug }}</td>
                     <td>{{ log.method }}</td>
@@ -119,5 +119,19 @@
             {% endif %}
         </div>
     </div>
+<script>
+const tz = new Date().toLocaleTimeString('en', {timeZoneName: 'short'}).split(' ').pop();
+document.querySelectorAll('.local-time').forEach(el => {
+    const utc = el.dataset.utc;
+    if (!utc) return;
+    const d = new Date(utc);
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mi = String(d.getMinutes()).padStart(2, '0');
+    const ss = String(d.getSeconds()).padStart(2, '0');
+    el.textContent = `${mm}-${dd} ${hh}:${mi}:${ss} ${tz}`;
+});
+</script>
 </body>
 </html>

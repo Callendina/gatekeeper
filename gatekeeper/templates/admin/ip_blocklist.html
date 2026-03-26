@@ -67,7 +67,7 @@
                 <tr>
                     <td>{{ entry.ip_address }}</td>
                     <td>{{ entry.reason or '-' }}</td>
-                    <td>{{ entry.blocked_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                    <td class="local-time" data-utc="{{ entry.blocked_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}">{{ entry.blocked_at.strftime('%Y-%m-%d %H:%M') }}</td>
                     <td>{{ entry.blocked_by or '-' }}</td>
                     <td>
                         <form method="POST" action="/_auth/admin/ip-blocklist/remove" style="display:inline;">
@@ -83,5 +83,18 @@
             </tbody>
         </table>
     </div>
+<script>
+const tz = new Date().toLocaleTimeString('en', {timeZoneName: 'short'}).split(' ').pop();
+document.querySelectorAll('.local-time').forEach(el => {
+    const utc = el.dataset.utc;
+    if (!utc) return;
+    const d = new Date(utc);
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mi = String(d.getMinutes()).padStart(2, '0');
+    el.textContent = `${mm}-${dd} ${hh}:${mi} ${tz}`;
+});
+</script>
 </body>
 </html>

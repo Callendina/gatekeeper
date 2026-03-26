@@ -127,8 +127,8 @@
                         {% endif %}
                     </td>
                     <td>{{ 'Yes' if c.active else 'No' }}</td>
-                    <td>{{ c.expires_at.strftime('%Y-%m-%d') if c.expires_at else '—' }}</td>
-                    <td>{{ c.created_at.strftime('%Y-%m-%d %H:%M') if c.created_at else '' }}</td>
+                    <td class="local-date" data-utc="{{ c.expires_at.strftime('%Y-%m-%dT%H:%M:%SZ') if c.expires_at else '' }}">{{ c.expires_at.strftime('%Y-%m-%d') if c.expires_at else '—' }}</td>
+                    <td class="local-time" data-utc="{{ c.created_at.strftime('%Y-%m-%dT%H:%M:%SZ') if c.created_at else '' }}">{{ c.created_at.strftime('%Y-%m-%d %H:%M') if c.created_at else '' }}</td>
                     <td>
                         {% if c.active %}
                         <form method="POST" action="/_auth/admin/invites/codes/{{ c.id }}/revoke" style="display:inline"
@@ -178,8 +178,8 @@
                         —
                         {% endif %}
                     </td>
-                    <td>{{ w.created_at.strftime('%Y-%m-%d %H:%M') if w.created_at else '' }}</td>
-                    <td>{{ w.reviewed_by or '' }} {{ w.reviewed_at.strftime('%Y-%m-%d') if w.reviewed_at else '' }}</td>
+                    <td class="local-time" data-utc="{{ w.created_at.strftime('%Y-%m-%dT%H:%M:%SZ') if w.created_at else '' }}">{{ w.created_at.strftime('%Y-%m-%d %H:%M') if w.created_at else '' }}</td>
+                    <td>{{ w.reviewed_by or '' }} <span class="local-date" data-utc="{{ w.reviewed_at.strftime('%Y-%m-%dT%H:%M:%SZ') if w.reviewed_at else '' }}">{{ w.reviewed_at.strftime('%Y-%m-%d') if w.reviewed_at else '' }}</span></td>
                     <td>
                         {% if w.status == 'pending' %}
                         <form method="POST" action="/_auth/admin/invites/waitlist/{{ w.id }}/approve" style="display:inline">
@@ -238,6 +238,25 @@
                 sel.removeAttribute('name');
                 this.appendChild(hidden);
             });
+        </script>
+        <script>
+        const tz = new Date().toLocaleTimeString('en', {timeZoneName: 'short'}).split(' ').pop();
+        document.querySelectorAll('.local-time').forEach(el => {
+            const utc = el.dataset.utc;
+            if (!utc) return;
+            const d = new Date(utc);
+            const mm = String(d.getMonth() + 1).padStart(2, '0');
+            const dd = String(d.getDate()).padStart(2, '0');
+            const hh = String(d.getHours()).padStart(2, '0');
+            const mi = String(d.getMinutes()).padStart(2, '0');
+            el.textContent = `${mm}-${dd} ${hh}:${mi} ${tz}`;
+        });
+        document.querySelectorAll('.local-date').forEach(el => {
+            const utc = el.dataset.utc;
+            if (!utc) return;
+            const d = new Date(utc);
+            el.textContent = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+        });
         </script>
     </div>
 </body>

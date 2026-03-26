@@ -123,8 +123,8 @@
                         <span class="anonymous">anonymous</span>
                         {% endif %}
                     </td>
-                    <td>{{ s.first_seen.strftime('%m-%d %H:%M') if s.first_seen else '-' }}</td>
-                    <td>{{ s.last_seen.strftime('%m-%d %H:%M') if s.last_seen else '-' }}</td>
+                    <td class="local-time" data-utc="{{ s.first_seen.strftime('%Y-%m-%dT%H:%M:%SZ') if s.first_seen else '' }}">{{ s.first_seen.strftime('%m-%d %H:%M') if s.first_seen else '-' }}</td>
+                    <td class="local-time" data-utc="{{ s.last_seen.strftime('%Y-%m-%dT%H:%M:%SZ') if s.last_seen else '' }}">{{ s.last_seen.strftime('%m-%d %H:%M') if s.last_seen else '-' }}</td>
                     <td>{{ s.duration }}</td>
                     <td style="text-align:right;">{{ s.requests }}</td>
                     <td class="truncate" title="{{ s.referrer or '' }}">{{ s.referrer or '-' }}</td>
@@ -137,5 +137,18 @@
             </tbody>
         </table>
     </div>
+<script>
+const tz = new Date().toLocaleTimeString('en', {timeZoneName: 'short'}).split(' ').pop();
+document.querySelectorAll('.local-time').forEach(el => {
+    const utc = el.dataset.utc;
+    if (!utc) return;
+    const d = new Date(utc);
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mi = String(d.getMinutes()).padStart(2, '0');
+    el.textContent = `${mm}-${dd} ${hh}:${mi} ${tz}`;
+});
+</script>
 </body>
 </html>

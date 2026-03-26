@@ -50,7 +50,7 @@
                 <tr>
                     <td>{{ user.email }}{% if user.is_system_admin %} <strong>(admin)</strong>{% endif %}</td>
                     <td>{{ user.display_name }}</td>
-                    <td>{{ user.created_at.strftime('%Y-%m-%d') }}</td>
+                    <td class="local-date" data-utc="{{ user.created_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}">{{ user.created_at.strftime('%Y-%m-%d') }}</td>
                     <td>
                         {% for role in user_roles.get(user.id, []) %}
                             <span>{{ role.app_slug }}: {{ role.role }}</span><br>
@@ -72,5 +72,13 @@
             </tbody>
         </table>
     </div>
+<script>
+document.querySelectorAll('.local-date').forEach(el => {
+    const utc = el.dataset.utc;
+    if (!utc) return;
+    const d = new Date(utc);
+    el.textContent = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+});
+</script>
 </body>
 </html>
