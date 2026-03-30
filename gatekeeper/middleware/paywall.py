@@ -11,6 +11,7 @@ API-only apps: tracked by IP.
 import datetime
 from enum import Enum
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from gatekeeper.models import AnonymousUsage
 from gatekeeper.config import AppConfig
@@ -117,7 +118,12 @@ async def _get_or_create_usage(
             api_call_count=0,
             window_start=datetime.datetime.utcnow(),
         )
-        db.add(usage)
-        await db.flush()
+        try:
+            db.add(usage)
+            await db.flush()
+        except IntegrityError:
+            await db.rollback()
+            result = await db.execute(stmt)
+            usage = result.scalar_one()
 
     return usage
