@@ -247,13 +247,21 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
                 await _log(db, ip, app.slug, path, method, None, "paywall", **_extra)
                 return Response(status_code=403, content="Usage limit exceeded. Please register.")
 
-        # Auto-extend temp keys on use
+        # Auto-extend temp keys on use (up to max lifetime)
         if api_key_obj.key_type == "temp":
+            max_hours = app.api_access.temp_key_max_lifetime_hours
+            if max_hours and api_key_obj.created_at:
+                hard_limit = api_key_obj.created_at + datetime.timedelta(hours=max_hours)
+                if datetime.datetime.utcnow() >= hard_limit:
+                    await _log(db, ip, app.slug, path, method, api_user.email if api_user else None, "temp_key_expired", **_extra)
+                    return Response(status_code=401, content="Temp key max lifetime exceeded. Please request a new key.")
             is_auth = api_key_obj.user_id is not None
             duration = app.api_access.temp_key_duration_for(is_auth)
             new_expiry = datetime.datetime.utcnow() + datetime.timedelta(
                 minutes=duration
             )
+            if max_hours and api_key_obj.created_at:
+                new_expiry = min(new_expiry, hard_limit)
             api_key_obj.expires_at = new_expiry
             await db.commit()
 

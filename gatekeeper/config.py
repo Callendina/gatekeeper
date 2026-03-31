@@ -57,6 +57,8 @@ class APIAccessConfig:
     # Optional per-type overrides (0 = use temp_key_duration_minutes)
     temp_key_duration_minutes_anonymous: int = 0
     temp_key_duration_minutes_authenticated: int = 0
+    # Maximum total lifetime for temp keys regardless of auto-extends (hours, 0 = unlimited)
+    temp_key_max_lifetime_hours: int = 24
     # How long a registered user's key lasts (hours takes precedence if set)
     registered_key_duration_days: int = 365
     registered_key_duration_hours: int = 0  # 0 = use days
@@ -181,6 +183,7 @@ def _parse_app_config(slug: str, app_raw: dict) -> AppConfig:
         temp_key_duration_minutes=api_raw.get("temp_key_duration_minutes", 30),
         temp_key_duration_minutes_anonymous=api_raw.get("temp_key_duration_minutes_anonymous", 0),
         temp_key_duration_minutes_authenticated=api_raw.get("temp_key_duration_minutes_authenticated", 0),
+        temp_key_max_lifetime_hours=api_raw.get("temp_key_max_lifetime_hours", 24),
         registered_key_duration_days=api_raw.get("registered_key_duration_days", 365),
         registered_key_duration_hours=api_raw.get("registered_key_duration_hours", 0),
         api_rate_limits=_parse_api_rate_limits(api_raw.get("api_rate_limits", {})),

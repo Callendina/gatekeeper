@@ -161,6 +161,16 @@ async def update_user_role(
     if redirect:
         return redirect
 
+    app_config = _config.apps.get(app_slug)
+    if not app_config:
+        return HTMLResponse(f"<h2>Unknown app: {app_slug}</h2>", status_code=400)
+    if role not in app_config.roles:
+        return HTMLResponse(
+            f"<h2>Invalid role '{role}' for {app_slug}.</h2>"
+            f"<p>Valid roles: {', '.join(app_config.roles)}</p>",
+            status_code=400,
+        )
+
     stmt = select(UserAppRole).where(
         UserAppRole.user_id == user_id,
         UserAppRole.app_slug == app_slug,
@@ -579,6 +589,8 @@ async def grant_invite_slots(
     from gatekeeper.auth.invites import get_user_invite_limit
 
     app_config = _config.apps.get(app_slug)
+    if not app_config:
+        return HTMLResponse(f"<h2>Unknown app: {app_slug}</h2>", status_code=400)
     default_limit = (app_config.invite.personal_invites.max_per_user
                      if app_config else 5)
 
