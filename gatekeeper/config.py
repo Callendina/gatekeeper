@@ -251,7 +251,7 @@ def load_config(path: str = "config.yaml") -> GatekeeperConfig:
                 apps[slug] = _parse_app_config(slug, app_raw)
                 logger.info(f"Loaded app config fragment: {fragment_path.name} (slug: {slug})")
 
-    return GatekeeperConfig(
+    config = GatekeeperConfig(
         host=server.get("host", "127.0.0.1"),
         port=server.get("port", 9100),
         secret_key=server.get("secret_key", ""),
@@ -264,3 +264,9 @@ def load_config(path: str = "config.yaml") -> GatekeeperConfig:
         github_callback_domain=oauth_github.get("callback_domain", ""),
         apps=apps,
     )
+    if not config.secret_key:
+        raise ValueError(
+            "server.secret_key must be set in config.yaml — "
+            'generate one with: python -c "import secrets; print(secrets.token_hex(32))"'
+        )
+    return config
