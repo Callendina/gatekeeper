@@ -14,6 +14,13 @@ paywall:
 # login_html_file: "/home/jonnosan/myapp/login.html"
 # admin_api_key: ""  # secret for /_auth/status/{slug}/keys endpoint
 # allowed_emails: []  # empty = anyone can sign in
+# magic_link:
+#   enabled: true                    # requires email config in main config.yaml
+#   link_expiry_minutes: 15
+#   rate_limit_per_email_minutes: 2
+#   rate_limit_per_ip_per_10min: 5
+#   pending_html_file: ""            # custom HTML: {{APP_NAME}}, {{CODE_SUBMIT_URL}}, {{WAITLIST_SUBMIT_URL}}, {{LOGOUT_URL}}, {{USER_EMAIL}}
+#   sent_html_file: ""               # custom HTML: {{APP_NAME}}, {{MESSAGE}}, {{LOGIN_URL}}
 roles:
   - "user"
   - "admin"

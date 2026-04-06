@@ -113,6 +113,27 @@ class InviteConfig:
 
 
 @dataclass
+class MagicLinkConfig:
+    enabled: bool = False
+    link_expiry_minutes: int = 15
+    rate_limit_per_email_minutes: int = 2  # min interval between sends to same email
+    rate_limit_per_ip_per_10min: int = 5   # max requests from one IP in 10 minutes
+    pending_html_file: str = ""   # custom pending/waiting room page
+    sent_html_file: str = ""      # custom "check your inbox" page
+
+
+@dataclass
+class EmailConfig:
+    provider: str = ""       # "resend" (or empty = disabled)
+    api_key: str = ""
+    from_address: str = ""
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.provider and self.api_key and self.from_address)
+
+
+@dataclass
 class AppConfig:
     slug: str
     name: str
@@ -122,6 +143,7 @@ class AppConfig:
     api_access: APIAccessConfig = field(default_factory=APIAccessConfig)
     rate_limit: RateLimitConfig = field(default_factory=RateLimitConfig)
     invite: InviteConfig = field(default_factory=InviteConfig)
+    magic_link: MagicLinkConfig = field(default_factory=MagicLinkConfig)
     login_html_file: str = ""
     admin_api_key: str = ""  # secret key for app-level admin API (e.g. listing active keys)
     allowed_emails: list[str] = field(default_factory=list)  # empty = anyone can sign in
@@ -144,6 +166,7 @@ class GatekeeperConfig:
     # Set this to the domain where the callback is registered.
     # If set, all GitHub OAuth flows route through this domain.
     github_callback_domain: str = ""
+    email: EmailConfig = field(default_factory=EmailConfig)
     apps: dict[str, AppConfig] = field(default_factory=dict)
 
     def app_for_domain(self, domain: str) -> AppConfig | None:
@@ -208,6 +231,15 @@ def _parse_app_config(slug: str, app_raw: dict) -> AppConfig:
             expiry_days=pi_raw.get("expiry_days", 7),
         ),
     )
+    ml_raw = app_raw.get("magic_link", {}) or {}
+    magic_link = MagicLinkConfig(
+        enabled=ml_raw.get("enabled", False),
+        link_expiry_minutes=ml_raw.get("link_expiry_minutes", 15),
+        rate_limit_per_email_minutes=ml_raw.get("rate_limit_per_email_minutes", 2),
+        rate_limit_per_ip_per_10min=ml_raw.get("rate_limit_per_ip_per_10min", 5),
+        pending_html_file=ml_raw.get("pending_html_file", ""),
+        sent_html_file=ml_raw.get("sent_html_file", ""),
+    )
     return AppConfig(
         slug=slug,
         name=app_raw.get("name", slug),
@@ -217,6 +249,7 @@ def _parse_app_config(slug: str, app_raw: dict) -> AppConfig:
         api_access=api_access,
         rate_limit=rate_limit,
         invite=invite,
+        magic_link=magic_link,
         roles=app_raw.get("roles", ["user", "admin"]),
         login_html_file=app_raw.get("login_html_file", ""),
         admin_api_key=app_raw.get("admin_api_key", ""),
@@ -254,6 +287,13 @@ def load_config(path: str = "config.yaml") -> GatekeeperConfig:
                 apps[slug] = _parse_app_config(slug, app_raw)
                 logger.info(f"Loaded app config fragment: {fragment_path.name} (slug: {slug})")
 
+    email_raw = raw.get("email", {}) or {}
+    email_config = EmailConfig(
+        provider=email_raw.get("provider", ""),
+        api_key=email_raw.get("api_key", ""),
+        from_address=email_raw.get("from_address", ""),
+    )
+
     config = GatekeeperConfig(
         host=server.get("host", "127.0.0.1"),
         port=server.get("port", 9100),
@@ -265,6 +305,7 @@ def load_config(path: str = "config.yaml") -> GatekeeperConfig:
         github_client_id=oauth_github.get("client_id", ""),
         github_client_secret=oauth_github.get("client_secret", ""),
         github_callback_domain=oauth_github.get("callback_domain", ""),
+        email=email_config,
         apps=apps,
     )
     if not config.secret_key:

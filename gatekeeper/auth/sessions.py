@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from gatekeeper.models import Session, User, UserAppRole
 
 
-SESSION_DURATION_HOURS = 24 * 7  # 1 week
+SESSION_DURATION_HOURS = 24 * 180  # 6 months
 
 
 async def create_session(

@@ -42,6 +42,7 @@ class UserAppRole(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     app_slug: Mapped[str] = mapped_column(String(100), nullable=False)
     role: Mapped[str] = mapped_column(String(50), nullable=False, default="user")
+    pending_invite: Mapped[bool] = mapped_column(Boolean, default=False)
 
     user: Mapped["User"] = relationship(back_populates="app_roles")
 
@@ -214,3 +215,19 @@ class InviteUserLimit(Base):
     __table_args__ = (
         Index("ix_invite_user_limit", "user_id", "app_slug", unique=True),
     )
+
+
+class MagicLink(Base):
+    __tablename__ = "magic_links"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    token: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
+    email: Mapped[str] = mapped_column(String(255), nullable=False)
+    app_slug: Mapped[str] = mapped_column(String(100), nullable=False)
+    ip_address: Mapped[str] = mapped_column(String(45), nullable=False)
+    has_invite: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime, default=datetime.datetime.utcnow
+    )
+    expires_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False)
+    used_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)

@@ -90,6 +90,12 @@ async def _pending_waitlist_count(db: AsyncSession) -> int:
     ) or 0
 
 
+async def _pending_invite_count(db: AsyncSession) -> int:
+    return await db.scalar(
+        select(func.count(UserAppRole.id)).where(UserAppRole.pending_invite == True)
+    ) or 0
+
+
 @router.get("")
 async def admin_dashboard(request: Request, db: AsyncSession = Depends(get_db)):
     admin, redirect = _check_admin(await _require_admin(request, db))
@@ -108,6 +114,8 @@ async def admin_dashboard(request: Request, db: AsyncSession = Depends(get_db)):
 
     pending_waitlist = await _pending_waitlist_count(db)
 
+    pending_invite = await _pending_invite_count(db)
+
     return templates.TemplateResponse("admin/dashboard.html", {
         "request": request,
         "user_count": user_count,
@@ -115,9 +123,9 @@ async def admin_dashboard(request: Request, db: AsyncSession = Depends(get_db)):
         "apps": _config.apps,
         "api_key_counts": api_key_counts,
         "pending_waitlist": pending_waitlist,
+        "pending_invite": pending_invite,
         "admin_email": admin,
         "environment": _config.environment,
-        "pending_waitlist": await _pending_waitlist_count(db),
     })
 
 
@@ -146,6 +154,7 @@ async def list_users(request: Request, db: AsyncSession = Depends(get_db)):
         "admin_email": admin,
         "environment": _config.environment,
         "pending_waitlist": await _pending_waitlist_count(db),
+        "pending_invite": await _pending_invite_count(db),
     })
 
 
@@ -185,6 +194,54 @@ async def update_user_role(
         db.add(app_role)
 
     await db.commit()
+    return RedirectResponse(url="/_auth/admin/users", status_code=302)
+
+
+@router.post("/users/{user_id}/approve")
+async def approve_pending_user(
+    user_id: int,
+    request: Request,
+    app_slug: str = Form(...),
+    db: AsyncSession = Depends(get_db),
+):
+    admin, redirect = _check_admin(await _require_admin(request, db))
+    if redirect:
+        return redirect
+
+    stmt = select(UserAppRole).where(
+        UserAppRole.user_id == user_id,
+        UserAppRole.app_slug == app_slug,
+        UserAppRole.pending_invite == True,
+    )
+    result = await db.execute(stmt)
+    app_role = result.scalar_one_or_none()
+    if app_role:
+        app_role.pending_invite = False
+        await db.commit()
+
+    return RedirectResponse(url="/_auth/admin/users", status_code=302)
+
+
+@router.post("/users/{user_id}/deny")
+async def deny_pending_user(
+    user_id: int,
+    request: Request,
+    app_slug: str = Form(...),
+    db: AsyncSession = Depends(get_db),
+):
+    admin, redirect = _check_admin(await _require_admin(request, db))
+    if redirect:
+        return redirect
+
+    # Delete the UserAppRole (removes their access for this app)
+    await db.execute(
+        delete(UserAppRole).where(
+            UserAppRole.user_id == user_id,
+            UserAppRole.app_slug == app_slug,
+        )
+    )
+    await db.commit()
+
     return RedirectResponse(url="/_auth/admin/users", status_code=302)
 
 

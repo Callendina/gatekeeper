@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Check Your Email - {{ app_name }}{% endblock %}
+{% block body %}
+<div class="container">
+    <h1>Check Your Email</h1>
+    <h2>{{ app_name }}</h2>
+
+    <p style="margin-bottom: 1rem; color: #555;">{{ message }}</p>
+    <p style="margin-bottom: 1.5rem; font-size: 0.9rem; color: #888;">The link will expire in 15 minutes.</p>
+
+    <div class="link">
+        <a href="/_auth/login?app={{ app }}">Back to sign in</a>
+    </div>
+</div>
+{% endblock %}

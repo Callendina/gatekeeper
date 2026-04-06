@@ -6,7 +6,7 @@ Centralized authentication, authorization, rate limiting, and soft paywall servi
 
 Gatekeeper is a FastAPI service that sits behind Caddy via `forward_auth`. Every HTTP request to any protected app passes through gatekeeper before reaching the app. Gatekeeper decides whether to allow, block, or redirect the request.
 
-Authentication is **OAuth-only** (Google and GitHub). No email/password — the servers have no outbound SMTP.
+Authentication is **OAuth** (Google and GitHub) and **magic link** (passwordless email sign-in via Resend API).
 
 ### Request flow
 
@@ -28,6 +28,7 @@ When gatekeeper returns 200, it sets these headers that Caddy copies to the upst
 1. IP blocklist (403 if blocked)
 2. Invite gate (if `invite.mode: "invite_only"` — see Invite System below)
 3. Session validation (cookie-based, done early for rate limit)
+3a. Pending invite check (302 redirect to `/_auth/pending` if user's role has `pending_invite=True`)
 4. Rate limit (429 if exceeded, per-IP, in-memory; authenticated users can get a higher limit)
 5. API key check (for apps with `api_access.mode: "key_required"`)
 6. Protected path check (302 redirect to login if auth required)
@@ -58,7 +59,7 @@ myapp.example.com {
 - **Python 3.11+** with **FastAPI** and **uvicorn**
 - **SQLite** via SQLAlchemy async (aiosqlite)
 - **authlib** for OAuth (Google, GitHub)
-- **httpx** for OAuth provider API calls
+- **httpx** for OAuth provider API calls and transactional email (Resend API)
 - **Jinja2** templates for login/nag/admin UI
 - **ProxyHeadersMiddleware** to trust X-Forwarded-Proto/Host from Caddy (so OAuth callback URLs are generated correctly)
 
@@ -77,6 +78,8 @@ gatekeeper/
     sessions.py       - Session create/validate/delete
     api_keys.py       - API key issuance and validation
     invites.py        - Invite code management, cookie signing, waitlist
+    magic_link.py     - Magic link (passwordless email) login, pending page
+    email.py          - Transactional email via Resend API
   middleware/
     ip_block.py       - IP blocklist (DB + in-memory cache)
     rate_limit.py     - In-memory sliding window rate limiter
@@ -111,7 +114,7 @@ name: "My App"
 domains: ["myapp.example.com"]
 protected_paths: ["/admin/*"]       # paths requiring authentication
 allowed_emails: []                   # restrict sign-in to these emails (empty = anyone)
-login_html_file: ""                  # custom login page HTML (placeholders: {{APP_NAME}}, {{GOOGLE_URL}}, {{GITHUB_URL}})
+login_html_file: ""                  # custom login page HTML (placeholders: {{APP_NAME}}, {{GOOGLE_URL}}, {{GITHUB_URL}}, {{MAGIC_LINK_FORM}}, {{MAGIC_LINK_URL}})
 admin_api_key: ""                    # secret for /_auth/status/{slug}/keys endpoint
 default_role: "user"                 # role assigned on first sign-in
 roles: ["user", "admin"]
@@ -123,6 +126,13 @@ paywall:
 rate_limit:                              # per-app rate limit (per IP)
   requests_per_minute: 500               # anonymous users (default 500)
   authenticated_requests_per_minute: 2000 # logged-in users (0 = use default)
+magic_link:
+  enabled: false                     # opt-in per app (requires email config)
+  link_expiry_minutes: 15            # how long the magic link is valid
+  rate_limit_per_email_minutes: 2    # min interval between sends to same email
+  rate_limit_per_ip_per_10min: 5     # max requests from one IP in 10 min
+  pending_html_file: ""              # custom pending/waiting room page (placeholders: {{APP_NAME}}, {{CODE_SUBMIT_URL}}, {{WAITLIST_SUBMIT_URL}}, {{LOGOUT_URL}}, {{USER_EMAIL}})
+  sent_html_file: ""                 # custom "check your inbox" page (placeholders: {{APP_NAME}}, {{MESSAGE}}, {{LOGIN_URL}})
 api_access:
   mode: "open"                       # "open" or "key_required"
   paths: ["/api/*"]
@@ -160,6 +170,12 @@ server:
   port: 9100
   secret_key: "..."
   environment: "STAGING"              # optional: shown as banner in admin UI
+
+# Required for magic link login
+email:
+  provider: "resend"                  # currently only "resend" supported
+  api_key: "re_..."                   # Resend API key
+  from_address: "noreply@callendina.com"
 ```
 
 ## Invite system
@@ -201,12 +217,58 @@ invite:
 ### Custom invite page placeholders
 `{{APP_NAME}}`, `{{INVITE_SUBMIT_URL}}`, `{{WAITLIST_SUBMIT_URL}}`, `{{LOGIN_URL}}`
 
+## Magic link login
+
+Passwordless email-based sign-in. Users enter their email address, receive a link, click it, and get a session. No passwords involved.
+
+### Setup
+1. Configure the `email` section in `config.yaml` (Resend API key + from address)
+2. Enable per-app with `magic_link.enabled: true`
+
+### Flow
+1. User enters email on login page → `POST /_auth/magic-link`
+2. Gatekeeper sends a signed, single-use link via Resend API
+3. User clicks link → `GET /_auth/magic-link/verify?token=X`
+4. Token validated, user created (or found by email), session created
+5. Cookie set, redirect to app
+
+### Rate limiting
+- **Per-email**: max 1 link per `rate_limit_per_email_minutes` (default 2 min) per app
+- **Per-IP**: max `rate_limit_per_ip_per_10min` (default 5) requests in a 10-minute window
+- Both silently drop the request (always returns "check your inbox" to prevent enumeration)
+
+### Account merging
+Email is the shared identity key. If a user signs in with Google first and later uses magic link (or vice versa), they resolve to the same User record. No explicit merge step needed.
+
+### Interaction with invite-only mode
+- **Returning users** (have a UserAppRole for this app): can always request a magic link, even without an invite cookie
+- **New users with invite cookie**: magic link sent, account created normally
+- **New users without invite**: silently ignored (no email sent)
+
+## Pending invite system
+
+When an invite-only app receives a new user who signed up via OAuth or magic link **without a valid invite code**, the user gets a real account but with `pending_invite=True` on their UserAppRole. They are redirected to a waiting room page (`/_auth/pending`) where they can:
+
+1. Enter an invite code (if they get one later) → clears pending status immediately
+2. Join the waitlist (if enabled) → admin reviews and approves
+3. Wait for admin to approve them via `/_auth/admin/users`
+
+### How it works
+- `UserAppRole.pending_invite` (boolean) — `True` = user created but not yet admitted
+- forward_auth checks this flag after session validation and redirects to `/_auth/pending`
+- Admin UI shows pending users with **Approve** / **Deny** buttons
+- Approving sets `pending_invite=False`, denying deletes the UserAppRole
+
+### Custom pending page
+Set `magic_link.pending_html_file` to a custom HTML file with placeholders:
+`{{APP_NAME}}`, `{{CODE_SUBMIT_URL}}`, `{{WAITLIST_SUBMIT_URL}}`, `{{LOGOUT_URL}}`, `{{USER_EMAIL}}`
+
 ## Key decisions
 
-- **OAuth-only** — no email/password, no password reset, no SMTP dependency.
+- **OAuth + magic link** — no passwords. Magic link requires a transactional email provider (Resend).
 - **One gatekeeper instance per server** (always localhost for Caddy). Each instance has its own SQLite DB. User data is per-app and per-environment by design.
 - **Apps identify requests by reading headers**, not by doing their own auth. Apps should trust `X-Gatekeeper-User` and `X-Gatekeeper-Role` headers (they can only come from gatekeeper via Caddy's forward_auth).
-- **Session cookies** are named `gk_session`, set httponly/secure/samesite=lax.
+- **Session cookies** are named `gk_session`, set httponly/secure/samesite=lax. Sessions last 6 months.
 - **Nag dismissal cookie** is `gk_nag_dismissed`, lasts 1 hour.
 - **Admin UI** is at `/_auth/admin` on any app domain (or a dedicated gatekeeper domain). Only accessible to users with `is_system_admin=True`. Admin auth validates the session cookie directly (not via headers) since `/_auth/*` bypasses forward_auth.
 - **Access log** is stored in SQLite — this is the log admins review to block IPs. It is NOT a replacement for Caddy's access log. Each log entry also stores `session_token`, `referrer`, and `user_agent` for analytics.

@@ -16,6 +16,12 @@ database:
   # SQLite database path (relative to working directory)
   path: "gatekeeper.db"
 
+# Required for magic link (passwordless email) login
+# email:
+#   provider: "resend"                # currently only "resend" supported
+#   api_key: "re_..."                 # get from https://resend.com/api-keys
+#   from_address: "noreply@callendina.com"  # must be on a Resend-verified domain
+
 oauth:
   google:
     client_id: ""
@@ -46,6 +52,14 @@ apps:
     # allowed_emails:
     #   - "alice@example.com"
     #   - "bob@example.com"
+    # Magic link (passwordless email) login — requires email config above
+    # magic_link:
+    #   enabled: true
+    #   link_expiry_minutes: 15
+    #   rate_limit_per_email_minutes: 2
+    #   rate_limit_per_ip_per_10min: 5
+    #   pending_html_file: ""   # custom waiting room page
+    #   sent_html_file: ""      # custom "check your inbox" page
     roles:
       - "user"
       - "admin"

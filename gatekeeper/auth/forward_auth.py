@@ -13,6 +13,7 @@ Gatekeeper responds:
 import datetime
 import json
 from fastapi import APIRouter, Request, Response, Depends
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from gatekeeper.database import get_db
@@ -169,7 +170,23 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
     if session_token:
         session, user, role = await validate_session(db, session_token, app.slug)
 
-    # 3. Check rate limit (per-app, authenticated users may get a higher limit)
+    # 3a. Check if user is pending invite — redirect to waiting room
+    if user:
+        from gatekeeper.models import UserAppRole
+        pending_role = await db.scalar(
+            select(UserAppRole).where(
+                UserAppRole.user_id == user.id,
+                UserAppRole.app_slug == app.slug,
+                UserAppRole.pending_invite == True,
+            )
+        )
+        if pending_role:
+            return Response(
+                status_code=302,
+                headers={"Location": f"/_auth/pending?app={app.slug}"},
+            )
+
+    # 4. Check rate limit (per-app, authenticated users may get a higher limit)
     rl_ok, rl_count, rl_limit = check_rate_limit(ip, app.rate_limit, authenticated=user is not None)
     if not rl_ok:
         await _log(db, ip, app.slug, path, method, None, "rate_limited", **_extra)
@@ -322,7 +339,7 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
         response.set_cookie(
             "gk_session", token,
             httponly=True, secure=True, samesite="lax",
-            max_age=86400 * 7,
+            max_age=86400 * 180,
         )
         response.headers["X-Gatekeeper-User"] = ""
         response.headers["X-Gatekeeper-Role"] = ""

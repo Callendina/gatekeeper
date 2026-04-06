@@ -49,6 +49,8 @@ async def login_page(request: Request, app: str = "", next: str = "/"):
     app, app_config = _resolve_app(request, app)
     app_name = app_config.name if app_config else "Application"
 
+    has_magic_link = bool(app_config and app_config.magic_link.enabled and _config.email.enabled)
+
     # If the app has a custom login HTML file, serve it with placeholders replaced
     if app_config and app_config.login_html_file:
         try:
@@ -57,6 +59,21 @@ async def login_page(request: Request, app: str = "", next: str = "/"):
             html = html.replace("{{APP_NAME}}", app_name)
             html = html.replace("{{GOOGLE_URL}}", f"/_auth/oauth/google?app={app}&next={next}")
             html = html.replace("{{GITHUB_URL}}", f"/_auth/oauth/github?app={app}&next={next}")
+            # Magic link form placeholder
+            if has_magic_link:
+                magic_form = (
+                    f'<form method="POST" action="/_auth/magic-link">'
+                    f'<input type="hidden" name="app" value="{app}">'
+                    f'<input type="hidden" name="next" value="{next}">'
+                    f'<input type="email" name="email" placeholder="your@email.com" required>'
+                    f'<button type="submit" class="btn btn-primary">Send me a sign-in link</button>'
+                    f'</form>'
+                )
+                html = html.replace("{{MAGIC_LINK_FORM}}", magic_form)
+                html = html.replace("{{MAGIC_LINK_URL}}", "/_auth/magic-link")
+            else:
+                html = html.replace("{{MAGIC_LINK_FORM}}", "")
+                html = html.replace("{{MAGIC_LINK_URL}}", "")
             return HTMLResponse(html)
         except FileNotFoundError:
             pass  # Fall through to default template
@@ -68,6 +85,7 @@ async def login_page(request: Request, app: str = "", next: str = "/"):
         "next": next,
         "has_google": bool(_config.google_client_id),
         "has_github": bool(_config.github_client_id),
+        "has_magic_link": has_magic_link,
     })
 
 
@@ -127,7 +145,7 @@ async def set_session(request: Request, token: str = "", sig: str = "", ts: int 
     response.set_cookie(
         "gk_session", token,
         httponly=True, secure=True, samesite="lax",
-        max_age=86400 * 7,
+        max_age=86400 * 180,
     )
     return response
 
@@ -278,26 +296,46 @@ async def _handle_oauth_callback(
         user = result.scalar_one_or_none()
 
         if user is None:
-            # For invite-only apps, reject new users without a valid invite
-            if (app_config and app_config.invite.enabled and invite_use_id is None
-                    and not (app_config.allowed_emails and email in app_config.allowed_emails)):
-                return HTMLResponse(
-                    "<h2>Invite required</h2>"
-                    "<p>An invite code is required to create an account for this application.</p>",
-                    status_code=403,
-                )
-
             user = User(email=email, display_name=name)
             db.add(user)
             await db.flush()
 
             if app_config:
+                # For invite-only apps, new users without invite get pending status
+                pending = (
+                    app_config.invite.enabled
+                    and invite_use_id is None
+                    and not (app_config.allowed_emails and email in app_config.allowed_emails)
+                )
                 role = UserAppRole(
                     user_id=user.id,
                     app_slug=app_slug,
                     role=app_config.default_role,
+                    pending_invite=pending,
                 )
                 db.add(role)
+        else:
+            # Existing user — check if they need an app role for this app
+            if app_config:
+                existing_role = await db.scalar(
+                    select(UserAppRole).where(
+                        UserAppRole.user_id == user.id,
+                        UserAppRole.app_slug == app_slug,
+                    )
+                )
+                if existing_role is None:
+                    pending = (
+                        app_config.invite.enabled
+                        and invite_use_id is None
+                        and not (app_config.allowed_emails and email in app_config.allowed_emails)
+                    )
+                    new_role = UserAppRole(
+                        user_id=user.id,
+                        app_slug=app_slug,
+                        role=app_config.default_role,
+                        pending_invite=pending,
+                    )
+                    db.add(new_role)
 
         # Link OAuth account
         oauth_link = OAuthAccount(
@@ -322,6 +360,17 @@ async def _handle_oauth_callback(
     ip = _get_client_ip(request)
     session_token = await create_session(db, user_id, app_slug, ip)
 
+    # Check if user is pending — override redirect to pending page
+    pending_role = await db.scalar(
+        select(UserAppRole).where(
+            UserAppRole.user_id == user_id,
+            UserAppRole.app_slug == app_slug,
+            UserAppRole.pending_invite == True,
+        )
+    )
+    if pending_role:
+        next_url = f"/_auth/pending?app={app_slug}"
+
     # Determine where to redirect
     current_host = request.headers.get("host", "")
     target_host = origin_host or (app_config.domains[0] if app_config and app_config.domains else "")
@@ -345,7 +394,7 @@ async def _handle_oauth_callback(
     response.set_cookie(
         "gk_session", session_token,
         httponly=True, secure=True, samesite="lax",
-        max_age=86400 * 7,
+        max_age=86400 * 180,
     )
     return response
 

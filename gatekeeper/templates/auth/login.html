@@ -16,6 +16,21 @@
     {% if has_github %}
     <a href="/_auth/oauth/github?app={{ app }}&next={{ next }}" class="btn btn-github">Sign in with GitHub</a>
     {% endif %}
+
+    {% if has_magic_link and (has_google or has_github) %}
+    <div class="divider">or</div>
+    {% endif %}
+
+    {% if has_magic_link %}
+    <form method="POST" action="/_auth/magic-link">
+        <input type="hidden" name="app" value="{{ app }}">
+        <input type="hidden" name="next" value="{{ next }}">
+        <div class="form-group">
+            <input type="email" name="email" placeholder="your@email.com" required>
+        </div>
+        <button type="submit" class="btn btn-primary">Send me a sign-in link</button>
+    </form>
+    {% endif %}
 </div>
 {% endblock %}
 

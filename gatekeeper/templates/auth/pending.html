@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Account Pending - {{ app_name }}{% endblock %}
+{% block body %}
+<div class="container">
+    <h1>Account Pending</h1>
+    <h2>{{ app_name }}</h2>
+
+    {% if user_email %}
+    <p style="margin-bottom: 1rem; color: #555;">
+        You're signed in as <strong>{{ user_email }}</strong>, but your account needs an invite code or admin approval before you can access this app.
+    </p>
+    {% else %}
+    <p style="margin-bottom: 1rem; color: #555;">
+        Your account is pending approval.
+    </p>
+    {% endif %}
+
+    <form method="POST" action="/_auth/pending/submit-code" style="margin-bottom: 1.5rem;">
+        <input type="hidden" name="app" value="{{ app }}">
+        <div class="form-group">
+            <label for="code">Have an invite code?</label>
+            <input type="text" name="code" id="code" placeholder="Enter invite code" required>
+        </div>
+        <button type="submit" class="btn btn-primary">Submit Code</button>
+    </form>
+
+    {% if has_waitlist %}
+    <div class="divider">or</div>
+    <p style="margin-bottom: 1rem; font-size: 0.9rem; color: #888;">
+        <a href="/_auth/invite?app={{ app }}" style="color: #4a90d9;">Join the waitlist</a> to request access.
+    </p>
+    {% endif %}
+
+    <div class="link">
+        <a href="/_auth/logout?app={{ app }}">Sign out</a>
+    </div>
+</div>
+{% endblock %}

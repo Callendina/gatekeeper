@@ -53,7 +53,21 @@
                     <td class="local-date" data-utc="{{ user.created_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}">{{ user.created_at.strftime('%Y-%m-%d') }}</td>
                     <td>
                         {% for role in user_roles.get(user.id, []) %}
-                            <span>{{ role.app_slug }}: {{ role.role }}</span><br>
+                            {% if role.pending_invite %}
+                                <span style="color:#e67e22;font-weight:bold;">{{ role.app_slug }}: PENDING</span>
+                                <span class="pending-actions">
+                                    <form method="POST" action="/_auth/admin/users/{{ user.id }}/approve" style="display:inline;">
+                                        <input type="hidden" name="app_slug" value="{{ role.app_slug }}">
+                                        <button type="submit" style="background:#27ae60;font-size:0.75rem;padding:0.15rem 0.4rem;">Approve</button>
+                                    </form>
+                                    <form method="POST" action="/_auth/admin/users/{{ user.id }}/deny" style="display:inline;">
+                                        <input type="hidden" name="app_slug" value="{{ role.app_slug }}">
+                                        <button type="submit" style="background:#c0392b;font-size:0.75rem;padding:0.15rem 0.4rem;">Deny</button>
+                                    </form>
+                                </span><br>
+                            {% else %}
+                                <span>{{ role.app_slug }}: {{ role.role }}</span><br>
+                            {% endif %}
                         {% endfor %}
                         {% for slug, app_cfg in apps.items() %}
                         <form method="POST" action="/_auth/admin/users/{{ user.id }}/role" class="role-form" style="margin-top:0.3rem;">

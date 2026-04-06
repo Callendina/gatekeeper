@@ -15,6 +15,7 @@ from gatekeeper.auth.login import router as login_router, init_login_routes
 from gatekeeper.auth.oauth import setup_oauth
 from gatekeeper.auth.api_keys import router as api_key_router, init_api_key_routes, cleanup_expired_keys
 from gatekeeper.auth.invites import router as invite_router, init_invite_routes
+from gatekeeper.auth.magic_link import router as magic_link_router, init_magic_link_routes, cleanup_expired_magic_links
 from gatekeeper.admin.routes import router as admin_router, init_admin_routes
 from gatekeeper.middleware.rate_limit import cleanup_old_entries
 from gatekeeper.auth.sessions import cleanup_expired_sessions
@@ -31,6 +32,7 @@ async def periodic_cleanup():
         async for db in get_db():
             await cleanup_expired_sessions(db)
             await cleanup_expired_keys(db)
+            await cleanup_expired_magic_links(db)
 
 
 _started_at = None
@@ -46,6 +48,7 @@ async def lifespan(app: FastAPI):
     init_admin_routes(config)
     init_api_key_routes(config)
     init_invite_routes(config)
+    init_magic_link_routes(config)
     setup_oauth(config)
 
     cleanup_task = asyncio.create_task(periodic_cleanup())
@@ -72,6 +75,7 @@ app.include_router(forward_auth_router)
 app.include_router(login_router)
 app.include_router(api_key_router)
 app.include_router(invite_router)
+app.include_router(magic_link_router)
 app.include_router(admin_router)
 
 
