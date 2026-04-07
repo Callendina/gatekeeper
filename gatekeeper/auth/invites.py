@@ -448,6 +448,11 @@ async def create_bulk_code(
     max_uses = body.get("max_uses", 100)
     expiry_days = body.get("expiry_days", 0)
     custom_code = body.get("code", "")
+    role = body.get("role", None)
+
+    # Validate role against app config if provided
+    if role and role not in app_config.roles:
+        return JSONResponse({"error": f"Invalid role '{role}'. Valid: {app_config.roles}"}, status_code=400)
 
     code = custom_code or generate_invite_code()
     expires_at = (datetime.datetime.utcnow() + datetime.timedelta(days=expiry_days)
@@ -459,12 +464,14 @@ async def create_bulk_code(
         code_type="bulk",
         max_uses=max_uses,
         expires_at=expires_at,
+        role=role or None,
     )
     db.add(invite)
     await db.commit()
 
     return JSONResponse({
         "code": code,
+        "role": role,
         "max_uses": max_uses,
         "expires_at": expires_at.isoformat() + "Z" if expires_at else None,
     })
@@ -497,7 +504,7 @@ async def list_codes(
             "id": c.id, "code": c.code, "code_type": c.code_type,
             "created_by_email": c.created_by_email,
             "max_uses": c.max_uses, "use_count": c.use_count,
-            "active": c.active,
+            "active": c.active, "role": c.role,
             "expires_at": c.expires_at.isoformat() + "Z" if c.expires_at else None,
             "created_at": c.created_at.isoformat() + "Z",
         }

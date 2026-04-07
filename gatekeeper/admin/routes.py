@@ -513,6 +513,7 @@ async def admin_create_code(
     max_uses: int = Form(100),
     expiry_days: int = Form(0),
     custom_code: str = Form(""),
+    role: str = Form(""),
     db: AsyncSession = Depends(get_db),
 ):
     admin, redirect = _check_admin(await _require_admin(request, db))
@@ -530,6 +531,7 @@ async def admin_create_code(
     invite = InviteCode(
         app_slug=app_slug, code=code, code_type="bulk",
         max_uses=max_uses, expires_at=expires_at,
+        role=role.strip() or None,
     )
     db.add(invite)
     await db.commit()

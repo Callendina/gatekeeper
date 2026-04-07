@@ -157,6 +157,7 @@ class InviteCode(Base):
     max_uses: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     use_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    role: Mapped[str | None] = mapped_column(String(50), nullable=True, default=None)
     expires_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime, default=datetime.datetime.utcnow

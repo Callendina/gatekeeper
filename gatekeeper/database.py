@@ -24,6 +24,7 @@ async def init_db(database_path: str):
         await _add_column_if_missing(conn, "access_log", "session_token", "VARCHAR(255)")
         await _add_column_if_missing(conn, "access_log", "referrer", "TEXT")
         await _add_column_if_missing(conn, "access_log", "user_agent", "TEXT")
+        await _add_column_if_missing(conn, "invite_codes", "role", "VARCHAR(50)")
 
 
 async def _add_column_if_missing(conn, table: str, column: str, col_type: str):
