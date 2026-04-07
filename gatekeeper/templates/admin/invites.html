@@ -89,6 +89,10 @@
                 <label>Expiry (days, 0=none)</label>
                 <input type="number" name="expiry_days" value="0" min="0">
             </div>
+            <div class="field">
+                <label>Role (blank = app default)</label>
+                <input type="text" name="role" placeholder="e.g. full, default">
+            </div>
             <button type="submit" class="btn-create">Create</button>
         </form>
 
@@ -99,6 +103,7 @@
                 <tr>
                     <th>App</th>
                     <th>Code</th>
+                    <th>Role</th>
                     <th>Type</th>
                     <th>Created By</th>
                     <th>Uses</th>
@@ -113,6 +118,7 @@
                 <tr class="{{ 'inactive' if not c.active }}">
                     <td>{{ c.app_slug }}</td>
                     <td><span class="code-copy">{{ c.code }}</span></td>
+                    <td>{{ c.role or '—' }}</td>
                     <td>{{ c.code_type }}</td>
                     <td>{{ c.created_by_email or '—' }}</td>
                     <td>
@@ -142,7 +148,7 @@
                 </tr>
                 {% endfor %}
                 {% if not codes %}
-                <tr><td colspan="9" style="text-align:center; color:#999;">No invite codes</td></tr>
+                <tr><td colspan="10" style="text-align:center; color:#999;">No invite codes</td></tr>
                 {% endif %}
             </tbody>
         </table>
