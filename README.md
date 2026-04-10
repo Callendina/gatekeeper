@@ -32,7 +32,7 @@ Every request passes through gatekeeper before reaching your app. Gatekeeper che
 2. Session cookie (validated early for rate limit)
 3. Rate limit (authenticated users can get a higher limit)
 4. API key (for apps with `api_access.mode: "key_required"`)
-5. Protected path (requires login?)
+5. Protected path (requires auth — accepts session cookie **or** registered API key)
 6. Soft paywall (nag screen or hard block)
 
 If allowed, gatekeeper sets headers that Caddy copies to your app:

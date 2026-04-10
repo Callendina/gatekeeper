@@ -31,7 +31,13 @@ When gatekeeper returns 200, it sets these headers that Caddy copies to the upst
 3a. Pending invite check (302 redirect to `/_auth/pending` if user's role has `pending_invite=True`)
 4. Rate limit (429 if exceeded, per-IP, in-memory; authenticated users can get a higher limit)
 5. API key check (for apps with `api_access.mode: "key_required"`)
-6. Protected path check (302 redirect to login if auth required)
+6. Protected path check — requires authentication via **either** method:
+   - Valid session cookie (interactive user) → allow
+   - Valid API key with an associated user (registered key) → allow
+   - Valid API key but anonymous (temp key, no user) → redirect to login
+   - No session and no API key → redirect to login
+   - Invalid API key → 401
+   Note: API key fallback only applies when the app has `api_access.mode: "key_required"`
 7. Soft paywall — three states:
    - **allowed**: within free quota, pass through
    - **nag**: exceeded `nag_after_sessions` threshold, 302 redirect to dismissable nag page
@@ -112,7 +118,7 @@ Apps can be defined in individual files under `config.d/` instead of (or in addi
 ```yaml
 name: "My App"
 domains: ["myapp.example.com"]
-protected_paths: ["/admin/*"]       # paths requiring authentication
+protected_paths: ["/admin/*"]       # paths requiring auth (session OR registered API key)
 allowed_emails: []                   # restrict sign-in to these emails (empty = anyone)
 login_html_file: ""                  # custom login page HTML (placeholders: {{APP_NAME}}, {{GOOGLE_URL}}, {{GITHUB_URL}}, {{MAGIC_LINK_FORM}}, {{MAGIC_LINK_URL}})
 admin_api_key: ""                    # secret for /_auth/status/{slug}/keys endpoint
@@ -267,7 +273,8 @@ Set `magic_link.pending_html_file` to a custom HTML file with placeholders:
 
 - **OAuth + magic link** — no passwords. Magic link requires a transactional email provider (Resend).
 - **One gatekeeper instance per server** (always localhost for Caddy). Each instance has its own SQLite DB. User data is per-app and per-environment by design.
-- **Apps identify requests by reading headers**, not by doing their own auth. Apps should trust `X-Gatekeeper-User` and `X-Gatekeeper-Role` headers (they can only come from gatekeeper via Caddy's forward_auth).
+- **Apps identify requests by reading headers**, not by doing their own auth. Apps should trust `X-Gatekeeper-User` and `X-Gatekeeper-Role` headers (they can only come from gatekeeper via Caddy's forward_auth). These headers are set identically whether the user authenticated via session cookie or API key.
+- **Protected paths accept either auth method** — session cookie (interactive users) or registered API key (API clients). Anonymous temp keys are rejected on protected paths since they have no user identity. This allows the same endpoints to serve both browser users and API consumers without config changes.
 - **Session cookies** are named `gk_session`, set httponly/secure/samesite=lax. Sessions last 6 months.
 - **Nag dismissal cookie** is `gk_nag_dismissed`, lasts 1 hour.
 - **Admin UI** is at `/_auth/admin` on any app domain (or a dedicated gatekeeper domain). Only accessible to users with `is_system_admin=True`. Admin auth validates the session cookie directly (not via headers) since `/_auth/*` bypasses forward_auth.
