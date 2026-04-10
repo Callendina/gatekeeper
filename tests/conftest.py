@@ -51,6 +51,21 @@ def get_test_config() -> GatekeeperConfig:
                 roles=["user", "admin"],
                 default_role="user",
             ),
+            "hybridapp": AppConfig(
+                slug="hybridapp",
+                name="Hybrid App",
+                domains=["hybrid.example.com"],
+                protected_paths=["/dashboard/*", "/admin/*"],
+                api_access=APIAccessConfig(
+                    mode="key_required",
+                    paths=["/api/*"],
+                    temp_key_duration_minutes=30,
+                    registered_key_duration_days=365,
+                ),
+                rate_limit=RateLimitConfig(requests_per_minute=10),
+                roles=["user", "admin"],
+                default_role="user",
+            ),
         },
     )
 

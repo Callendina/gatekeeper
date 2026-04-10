@@ -300,6 +300,27 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
     is_protected = _path_matches_any(path, app.protected_paths)
 
     if is_protected and user is None:
+        # Try API key auth as fallback (only for apps with key_required mode)
+        api_key_header = request.headers.get("x-forwarded-api-key", "")
+        if app.api_access.enabled and api_key_header:
+            api_key_obj, api_user, api_role = await validate_api_key(db, api_key_header, app.slug)
+            if api_key_obj is None:
+                await _log(db, ip, app.slug, path, method, None, "api_key_invalid", **_extra)
+                return Response(status_code=401, content="Invalid or expired API key")
+            if api_user is None:
+                # Anonymous temp key — protected paths need a real user
+                await _log(db, ip, app.slug, path, method, None, "auth_required", **_extra)
+                login_url = f"/_auth/login?app={app.slug}&next={path}"
+                return Response(status_code=302, headers={"Location": login_url})
+            # Valid key with a user — allow through
+            response = Response(status_code=200)
+            response.headers["X-Gatekeeper-User"] = api_user.email
+            response.headers["X-Gatekeeper-Role"] = api_role or ""
+            if api_user.is_system_admin:
+                response.headers["X-Gatekeeper-System-Admin"] = "true"
+            await _log(db, ip, app.slug, path, method, api_user.email, "allowed", **_extra)
+            return response
+
         await _log(db, ip, app.slug, path, method, None, "auth_required", **_extra)
         login_url = f"/_auth/login?app={app.slug}&next={path}"
         return Response(
