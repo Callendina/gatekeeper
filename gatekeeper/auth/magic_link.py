@@ -119,7 +119,8 @@ async def send_magic_link(
     ):
         return _sent_page(request, app_slug, app_config, success_msg)
 
-    # Invite-only gate: existing users always allowed, new users need invite
+    # Invite-only gate: check if user has invite — but always send the email.
+    # Users without an invite will be placed in pending state on verify.
     has_invite = False
     if app_config.invite.enabled:
         is_returning = await _user_has_app_role(db, email, app_slug)
@@ -132,9 +133,6 @@ async def send_magic_link(
                     app_config.invite.cookie_max_age_days,
                 )
                 has_invite = invite_use_id is not None
-            if not has_invite:
-                # New user without invite — silently don't send
-                return _sent_page(request, app_slug, app_config, success_msg)
         else:
             has_invite = True  # Returning user, treat as having invite
 
