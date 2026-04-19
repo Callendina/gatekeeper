@@ -25,8 +25,8 @@ async def init_db(database_path: str):
         await _add_column_if_missing(conn, "access_log", "referrer", "TEXT")
         await _add_column_if_missing(conn, "access_log", "user_agent", "TEXT")
         await _add_column_if_missing(conn, "invite_codes", "role", "VARCHAR(50)")
-        await _add_column_if_missing(conn, "invite_codes", "group", "VARCHAR(100)")
-        await _add_column_if_missing(conn, "user_app_roles", "group", "VARCHAR(100)")
+        await _add_column_if_missing(conn, "invite_codes", '"group"', "VARCHAR(100)")
+        await _add_column_if_missing(conn, "user_app_roles", '"group"', "VARCHAR(100)")
 
 
 async def _add_column_if_missing(conn, table: str, column: str, col_type: str):
@@ -34,10 +34,13 @@ async def _add_column_if_missing(conn, table: str, column: str, col_type: str):
     import sqlalchemy
     result = await conn.execute(sqlalchemy.text(f"PRAGMA table_info({table})"))
     columns = [row[1] for row in result.fetchall()]
-    if column not in columns:
-        await conn.execute(sqlalchemy.text(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}"))
+    # Strip quotes for comparison, but use quoted form in ALTER TABLE
+    bare_column = column.strip('"')
+    if bare_column not in columns:
+        quoted = f'"{bare_column}"' if bare_column != column else column
+        await conn.execute(sqlalchemy.text(f"ALTER TABLE {table} ADD COLUMN {quoted} {col_type}"))
         import logging
-        logging.getLogger("gatekeeper.database").info(f"Added column {table}.{column}")
+        logging.getLogger("gatekeeper.database").info(f"Added column {table}.{bare_column}")
 
 
 async def get_db() -> AsyncSession:
