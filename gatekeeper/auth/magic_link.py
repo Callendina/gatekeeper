@@ -325,7 +325,7 @@ async def pending_page(
     user_email = None
     if session_token and app_slug:
         from gatekeeper.auth.sessions import validate_session
-        _sess, user, _role = await validate_session(db, session_token, app_slug)
+        _sess, user, _role, _grp = await validate_session(db, session_token, app_slug)
         if user:
             user_email = user.email
 

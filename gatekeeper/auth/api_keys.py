@@ -79,7 +79,7 @@ async def issue_registered_key(
     if not app.api_access.enabled:
         return JSONResponse({"error": "API keys not enabled for this app"}, status_code=400)
 
-    session, user, role = await validate_session(db, session_token, app.slug)
+    session, user, role, _grp = await validate_session(db, session_token, app.slug)
     if user is None:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
 
@@ -163,7 +163,7 @@ async def issue_temp_key(
     session, user, role = None, None, None
 
     if session_token:
-        session, user, role = await validate_session(db, session_token, app.slug)
+        session, user, role, _grp = await validate_session(db, session_token, app.slug)
 
     if session is None:
         # Create anonymous session and set cookie in response
@@ -172,7 +172,7 @@ async def issue_temp_key(
         set_cookie_token = await create_session(db, None, app.slug, ip)
         session_token = set_cookie_token
         # Re-validate to get the session object
-        session, user, role = await validate_session(db, session_token, app.slug)
+        session, user, role, _grp = await validate_session(db, session_token, app.slug)
 
     if session is None:
         return JSONResponse({"error": "Could not create session"}, status_code=500)

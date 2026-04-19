@@ -74,7 +74,7 @@ async def _check_invite_gate(request: Request, db, app, ip: str,
 
     # Authenticated users with valid sessions always pass
     if session_token:
-        _sess, _usr, _role = await validate_session(db, session_token, app.slug)
+        _sess, _usr, _role, _grp = await validate_session(db, session_token, app.slug)
         if _usr is not None:
             return None  # authenticated user
 

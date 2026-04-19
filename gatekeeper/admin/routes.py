@@ -33,7 +33,7 @@ async def _require_admin(request: Request, db: AsyncSession):
     if session_token:
         # Try all configured app slugs
         for app_slug in _config.apps:
-            session, user, role = await validate_session(db, session_token, app_slug)
+            session, user, role, _grp = await validate_session(db, session_token, app_slug)
             if user:
                 if user.is_system_admin:
                     return user.email

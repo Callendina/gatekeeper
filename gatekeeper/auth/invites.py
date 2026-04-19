@@ -304,7 +304,7 @@ async def create_personal_invite(
     if not session_token:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
 
-    session, user, role = await validate_session(db, session_token, app_config.slug)
+    session, user, role, _grp = await validate_session(db, session_token, app_config.slug)
     if user is None:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
 
@@ -359,7 +359,7 @@ async def invite_status(
     if not session_token:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
 
-    session, user, role = await validate_session(db, session_token, app_config.slug)
+    session, user, role, _grp = await validate_session(db, session_token, app_config.slug)
     if user is None:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
 
