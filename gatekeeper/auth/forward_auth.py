@@ -166,9 +166,9 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
             return invite_response
 
     # 3. Validate session early
-    session, user, role = None, None, None
+    session, user, role, group = None, None, None, None
     if session_token:
-        session, user, role = await validate_session(db, session_token, app.slug)
+        session, user, role, group = await validate_session(db, session_token, app.slug)
 
     # 3a. Check if user is pending invite — redirect to waiting room
     if user:
@@ -216,7 +216,7 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
                 content="API key required. See /_auth/api-key for details.",
             )
 
-        api_key_obj, api_user, api_role = await validate_api_key(db, api_key_header, app.slug)
+        api_key_obj, api_user, api_role, api_group = await validate_api_key(db, api_key_header, app.slug)
         if api_key_obj is None:
             await _log(db, ip, app.slug, path, method, None, "api_key_invalid", **_extra)
             return Response(status_code=401, content="Invalid or expired API key")
@@ -287,6 +287,7 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
         if api_user:
             response.headers["X-Gatekeeper-User"] = api_user.email
             response.headers["X-Gatekeeper-Role"] = api_role or ""
+            response.headers["X-Gatekeeper-Group"] = api_group or ""
             if api_user.is_system_admin:
                 response.headers["X-Gatekeeper-System-Admin"] = "true"
             await _log(db, ip, app.slug, path, method, api_user.email, "allowed", **_extra)
@@ -303,7 +304,7 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
         # Try API key auth as fallback (only for apps with key_required mode)
         api_key_header = request.headers.get("x-forwarded-api-key", "")
         if app.api_access.enabled and api_key_header:
-            api_key_obj, api_user, api_role = await validate_api_key(db, api_key_header, app.slug)
+            api_key_obj, api_user, api_role, api_group = await validate_api_key(db, api_key_header, app.slug)
             if api_key_obj is None:
                 await _log(db, ip, app.slug, path, method, None, "api_key_invalid", **_extra)
                 return Response(status_code=401, content="Invalid or expired API key")
@@ -316,6 +317,7 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
             response = Response(status_code=200)
             response.headers["X-Gatekeeper-User"] = api_user.email
             response.headers["X-Gatekeeper-Role"] = api_role or ""
+            response.headers["X-Gatekeeper-Group"] = api_group or ""
             if api_user.is_system_admin:
                 response.headers["X-Gatekeeper-System-Admin"] = "true"
             await _log(db, ip, app.slug, path, method, api_user.email, "allowed", **_extra)
@@ -364,6 +366,7 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
         )
         response.headers["X-Gatekeeper-User"] = ""
         response.headers["X-Gatekeeper-Role"] = ""
+        response.headers["X-Gatekeeper-Group"] = ""
         await _log(db, ip, app.slug, path, method, None, "allowed",
                    session_token=token, referrer=referrer, user_agent=user_agent)
         return response
@@ -373,11 +376,13 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
     if user:
         response.headers["X-Gatekeeper-User"] = user.email
         response.headers["X-Gatekeeper-Role"] = role or ""
+        response.headers["X-Gatekeeper-Group"] = group or ""
         if user.is_system_admin:
             response.headers["X-Gatekeeper-System-Admin"] = "true"
     else:
         response.headers["X-Gatekeeper-User"] = ""
         response.headers["X-Gatekeeper-Role"] = ""
+        response.headers["X-Gatekeeper-Group"] = ""
 
     await _log(db, ip, app.slug, path, method, user.email if user else None, "allowed", **_extra)
     return response

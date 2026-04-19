@@ -295,8 +295,9 @@ async def _handle_oauth_callback(
         result = await db.execute(stmt)
         user = result.scalar_one_or_none()
 
-        # Determine role: use invite code's role if set, otherwise app default
+        # Determine role and group: use invite code's values if set, otherwise app defaults
         assigned_role = app_config.default_role if app_config else "user"
+        assigned_group = None
         if invite_use_id and app_config:
             from gatekeeper.models import InviteUse as InviteUseModel, InviteCode as InviteCodeModel
             _invite_use = await db.scalar(
@@ -306,8 +307,11 @@ async def _handle_oauth_callback(
                 _invite_code = await db.scalar(
                     select(InviteCodeModel).where(InviteCodeModel.id == _invite_use.invite_code_id)
                 )
-                if _invite_code and _invite_code.role:
-                    assigned_role = _invite_code.role
+                if _invite_code:
+                    if _invite_code.role:
+                        assigned_role = _invite_code.role
+                    if _invite_code.group:
+                        assigned_group = _invite_code.group
 
         if user is None:
             user = User(email=email, display_name=name)
@@ -325,6 +329,7 @@ async def _handle_oauth_callback(
                     user_id=user.id,
                     app_slug=app_slug,
                     role=assigned_role,
+                    group=assigned_group,
                     pending_invite=pending,
                 )
                 db.add(role)
@@ -347,6 +352,7 @@ async def _handle_oauth_callback(
                         user_id=user.id,
                         app_slug=app_slug,
                         role=assigned_role,
+                        group=assigned_group,
                         pending_invite=pending,
                     )
                     db.add(new_role)

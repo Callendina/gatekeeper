@@ -164,6 +164,7 @@ async def update_user_role(
     request: Request,
     app_slug: str = Form(...),
     role: str = Form(...),
+    group: str = Form(""),
     db: AsyncSession = Depends(get_db),
 ):
     admin, redirect = _check_admin(await _require_admin(request, db))
@@ -189,8 +190,10 @@ async def update_user_role(
 
     if app_role:
         app_role.role = role
+        if group.strip():
+            app_role.group = group.strip()
     else:
-        app_role = UserAppRole(user_id=user_id, app_slug=app_slug, role=role)
+        app_role = UserAppRole(user_id=user_id, app_slug=app_slug, role=role, group=group.strip() or None)
         db.add(app_role)
 
     await db.commit()
@@ -514,6 +517,7 @@ async def admin_create_code(
     expiry_days: int = Form(0),
     custom_code: str = Form(""),
     role: str = Form(""),
+    group: str = Form(""),
     db: AsyncSession = Depends(get_db),
 ):
     admin, redirect = _check_admin(await _require_admin(request, db))
@@ -532,6 +536,7 @@ async def admin_create_code(
         app_slug=app_slug, code=code, code_type="bulk",
         max_uses=max_uses, expires_at=expires_at,
         role=role.strip() or None,
+        group=group.strip() or None,
     )
     db.add(invite)
     await db.commit()

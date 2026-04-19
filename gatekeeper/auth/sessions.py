@@ -27,8 +27,8 @@ async def create_session(
 
 async def validate_session(
     db: AsyncSession, token: str, app_slug: str
-) -> tuple[Session | None, User | None, str | None]:
-    """Returns (session, user, role) or (None, None, None) if invalid."""
+) -> tuple[Session | None, User | None, str | None, str | None]:
+    """Returns (session, user, role, group) or (None, None, None, None) if invalid."""
     stmt = select(Session).where(
         Session.token == token,
         Session.app_slug == app_slug,
@@ -38,17 +38,17 @@ async def validate_session(
     session = result.scalar_one_or_none()
 
     if session is None:
-        return None, None, None
+        return None, None, None, None
 
     if session.user_id is None:
-        return session, None, None
+        return session, None, None, None
 
     user_stmt = select(User).where(User.id == session.user_id)
     user_result = await db.execute(user_stmt)
     user = user_result.scalar_one_or_none()
 
     if user is None:
-        return None, None, None
+        return None, None, None, None
 
     role_stmt = select(UserAppRole).where(
         UserAppRole.user_id == user.id,
@@ -57,8 +57,9 @@ async def validate_session(
     role_result = await db.execute(role_stmt)
     app_role = role_result.scalar_one_or_none()
     role = app_role.role if app_role else None
+    group = app_role.group if app_role else None
 
-    return session, user, role
+    return session, user, role, group
 
 
 async def delete_session(db: AsyncSession, token: str):

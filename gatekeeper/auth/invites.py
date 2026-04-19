@@ -449,6 +449,7 @@ async def create_bulk_code(
     expiry_days = body.get("expiry_days", 0)
     custom_code = body.get("code", "")
     role = body.get("role", None)
+    group = body.get("group", None)
 
     # Validate role against app config if provided
     if role and role not in app_config.roles:
@@ -465,6 +466,7 @@ async def create_bulk_code(
         max_uses=max_uses,
         expires_at=expires_at,
         role=role or None,
+        group=group or None,
     )
     db.add(invite)
     await db.commit()
@@ -472,6 +474,7 @@ async def create_bulk_code(
     return JSONResponse({
         "code": code,
         "role": role,
+        "group": group,
         "max_uses": max_uses,
         "expires_at": expires_at.isoformat() + "Z" if expires_at else None,
     })

@@ -301,8 +301,9 @@ async def validate_api_key(
     role_result = await db.execute(role_stmt)
     app_role = role_result.scalar_one_or_none()
     role = app_role.role if app_role else None
+    group = app_role.group if app_role else None
 
-    return api_key, user, role
+    return api_key, user, role, group
 
 
 async def cleanup_expired_keys(db: AsyncSession):
