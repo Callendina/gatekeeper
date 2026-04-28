@@ -188,12 +188,15 @@ async def update_user_role(
     result = await db.execute(stmt)
     app_role = result.scalar_one_or_none()
 
+    # The form on the admin users page pre-fills both role and group with the
+    # current values, so a blank group on submit is an explicit clear (rather
+    # than "keep existing"). Always use the submitted value verbatim.
+    group_value = group.strip() or None
     if app_role:
         app_role.role = role
-        if group.strip():
-            app_role.group = group.strip()
+        app_role.group = group_value
     else:
-        app_role = UserAppRole(user_id=user_id, app_slug=app_slug, role=role, group=group.strip() or None)
+        app_role = UserAppRole(user_id=user_id, app_slug=app_slug, role=role, group=group_value)
         db.add(app_role)
 
     await db.commit()

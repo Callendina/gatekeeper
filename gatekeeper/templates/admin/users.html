@@ -52,6 +52,11 @@
                     <td>{{ user.display_name }}</td>
                     <td class="local-date" data-utc="{{ user.created_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}">{{ user.created_at.strftime('%Y-%m-%d') }}</td>
                     <td>
+                        {# Build per-app lookup so the role-set form can pre-fill the existing role + group. #}
+                        {% set existing = {} %}
+                        {% for r in user_roles.get(user.id, []) %}
+                            {% if not r.pending_invite %}{% set _ = existing.update({r.app_slug: r}) %}{% endif %}
+                        {% endfor %}
                         {% for role in user_roles.get(user.id, []) %}
                             {% if role.pending_invite %}
                                 <span style="color:#e67e22;font-weight:bold;">{{ role.app_slug }}: PENDING</span>
@@ -66,17 +71,19 @@
                                     </form>
                                 </span><br>
                             {% else %}
-                                <span>{{ role.app_slug }}: {{ role.role }}</span><br>
+                                <span>{{ role.app_slug }}: <strong>{{ role.role }}</strong>{% if role.group %} <span style="color:#666;">/ {{ role.group }}</span>{% endif %}</span><br>
                             {% endif %}
                         {% endfor %}
                         {% for slug, app_cfg in apps.items() %}
+                        {% set cur = existing.get(slug) %}
                         <form method="POST" action="/_auth/admin/users/{{ user.id }}/role" class="role-form" style="margin-top:0.3rem;">
                             <input type="hidden" name="app_slug" value="{{ slug }}">
                             <select name="role">
                                 {% for r in app_cfg.roles %}
-                                <option value="{{ r }}">{{ slug }}: {{ r }}</option>
+                                <option value="{{ r }}" {% if cur and cur.role == r %}selected{% endif %}>{{ slug }}: {{ r }}</option>
                                 {% endfor %}
                             </select>
+                            <input type="text" name="group" placeholder="group (e.g. CLUB.PEN)" value="{{ cur.group if cur and cur.group else '' }}" style="font-size:0.85rem;width:11rem;">
                             <button type="submit">Set</button>
                         </form>
                         {% endfor %}
