@@ -260,24 +260,31 @@ async def _handle_oauth_callback(
     origin_host = request.session.pop("oauth_origin_host", "")
     app_config = _config.apps.get(app_slug)
 
-    # Check allowed_emails whitelist
-    if app_config and app_config.allowed_emails and email not in app_config.allowed_emails:
+    # Resolve invite cookie FIRST so a valid invite can authorize a non-whitelisted
+    # email. Without this, allowed_emails would block invited users (the typical
+    # use case is "admins always allowed via allowed_emails; new users come in
+    # via invite codes").
+    invite_use_id = None
+    if app_config and app_config.invite.enabled:
+        from gatekeeper.auth.invites import verify_invite_cookie
+        invite_cookie = request.cookies.get("gk_invite_granted")
+        if invite_cookie:
+            invite_use_id = verify_invite_cookie(
+                invite_cookie, _config.secret_key, app_slug,
+                app_config.invite.cookie_max_age_days,
+            )
+
+    # Check allowed_emails whitelist — bypassed if the user holds a valid
+    # invite cookie for this app.
+    on_email_whitelist = bool(app_config and app_config.allowed_emails
+                               and email in app_config.allowed_emails)
+    if (app_config and app_config.allowed_emails
+            and not on_email_whitelist
+            and invite_use_id is None):
         return HTMLResponse(
             "<h2>Access denied</h2><p>Your account is not authorised for this application.</p>",
             status_code=403,
         )
-
-    # Check invite cookie (for linking invite use to email on sign-up)
-    invite_use_id = None
-    if app_config and app_config.invite.enabled:
-        if not (app_config.allowed_emails and email in app_config.allowed_emails):
-            from gatekeeper.auth.invites import verify_invite_cookie
-            invite_cookie = request.cookies.get("gk_invite_granted")
-            if invite_cookie:
-                invite_use_id = verify_invite_cookie(
-                    invite_cookie, _config.secret_key, app_slug,
-                    app_config.invite.cookie_max_age_days,
-                )
 
     # Check if OAuth account already linked
     stmt = select(OAuthAccount).where(
