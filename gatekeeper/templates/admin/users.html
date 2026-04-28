@@ -48,7 +48,14 @@
             <tbody>
                 {% for user in users %}
                 <tr>
-                    <td>{{ user.email }}{% if user.is_system_admin %} <strong>(admin)</strong>{% endif %}</td>
+                    <td>{{ user.email }}{% if user.is_system_admin %} <strong>(admin)</strong>{% endif %}
+                        {% if user.email != admin_email %}
+                        <form method="POST" action="/_auth/admin/users/{{ user.id }}/delete" style="display:inline;margin-left:0.5rem;"
+                              onsubmit="return confirm('Permanently delete user {{ user.email }}? This removes all their app roles, sessions, API keys, and OAuth links. Audit log entries are preserved.');">
+                            <button type="submit" style="background:#c0392b;font-size:0.75rem;padding:0.15rem 0.4rem;">Delete</button>
+                        </form>
+                        {% endif %}
+                    </td>
                     <td>{{ user.display_name }}</td>
                     <td class="local-date" data-utc="{{ user.created_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}">{{ user.created_at.strftime('%Y-%m-%d') }}</td>
                     <td>

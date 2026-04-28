@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from gatekeeper.database import get_db
 from gatekeeper.config import GatekeeperConfig
-from gatekeeper.models import User, UserAppRole, IPBlocklist, AccessLog, Session, APIKey, InviteCode, InviteUse, InviteWaitlist, InviteUserLimit
+from gatekeeper.models import User, UserAppRole, OAuthAccount, IPBlocklist, AccessLog, Session, APIKey, InviteCode, InviteUse, InviteWaitlist, InviteUserLimit
 from gatekeeper.middleware.ip_block import block_ip, unblock_ip
 from gatekeeper.auth.sessions import validate_session
 
@@ -246,6 +246,45 @@ async def deny_pending_user(
             UserAppRole.app_slug == app_slug,
         )
     )
+    await db.commit()
+
+    return RedirectResponse(url="/_auth/admin/users", status_code=302)
+
+
+@router.post("/users/{user_id}/delete")
+async def delete_user(
+    user_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Hard-delete a user and all their FK-tied data: OAuth accounts, app
+    roles across all apps, sessions, API keys, invite-user limits. The
+    AccessLog and InviteUse audit tables are left intact (they reference
+    by email string, not user_id, so they survive deletion as audit trail)."""
+    admin, redirect = _check_admin(await _require_admin(request, db))
+    if redirect:
+        return redirect
+
+    # Look up the user first — surface a clear error if not found, and guard
+    # against an admin deleting their own account (which would lock them out).
+    target = await db.scalar(select(User).where(User.id == user_id))
+    if target is None:
+        return HTMLResponse(f"<h2>User #{user_id} not found</h2>", status_code=404)
+    if target.email == admin:
+        return HTMLResponse(
+            "<h2>Cannot delete your own admin account.</h2>"
+            "<p>Sign in as a different admin first, or use the database directly.</p>",
+            status_code=400,
+        )
+
+    # Delete dependent rows in order of FK dependency. Sessions and API keys
+    # have nullable FKs but it's cleaner to remove them than orphan.
+    await db.execute(delete(OAuthAccount).where(OAuthAccount.user_id == user_id))
+    await db.execute(delete(UserAppRole).where(UserAppRole.user_id == user_id))
+    await db.execute(delete(Session).where(Session.user_id == user_id))
+    await db.execute(delete(APIKey).where(APIKey.user_id == user_id))
+    await db.execute(delete(InviteUserLimit).where(InviteUserLimit.user_id == user_id))
+    await db.execute(delete(User).where(User.id == user_id))
     await db.commit()
 
     return RedirectResponse(url="/_auth/admin/users", status_code=302)
