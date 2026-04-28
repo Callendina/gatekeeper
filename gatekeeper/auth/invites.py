@@ -148,8 +148,11 @@ async def get_user_invite_limit(db: AsyncSession, user_id: int,
 # ---------------------------------------------------------------------------
 
 def _render_invite_page(request: Request, app: str, app_config, next: str,
-                        error: str = "") -> HTMLResponse:
-    """Render the invite page — custom HTML or default template."""
+                        error: str = "", prefill_code: str = "") -> HTMLResponse:
+    """Render the invite page — custom HTML or default template.
+    prefill_code populates the input field so admin-shared links land on
+    the form pre-filled. The user still has to click submit (intentional —
+    no GET-based redemption to avoid CSRF / accidental clicks)."""
     app_name = app_config.name if app_config else "Application"
 
     if app_config and app_config.invite.invite_html_file:
@@ -167,6 +170,7 @@ def _render_invite_page(request: Request, app: str, app_config, next: str,
             html = html.replace("{{ERROR}}", error)
             html = html.replace("{{WAITLIST_CONFIRMED}}", "")
             html = html.replace("{{WAITLIST_EMAIL}}", "")
+            html = html.replace("{{PREFILL_CODE}}", prefill_code)
             return HTMLResponse(html)
         except FileNotFoundError:
             pass
@@ -178,13 +182,14 @@ def _render_invite_page(request: Request, app: str, app_config, next: str,
         "next": next,
         "show_waitlist": app_config.invite.waitlist if app_config else False,
         "error": error,
+        "prefill_code": prefill_code,
     })
 
 
 @router.get("/invite")
-async def invite_page(request: Request, app: str = "", next: str = "/"):
+async def invite_page(request: Request, app: str = "", next: str = "/", code: str = ""):
     app, app_config = _resolve_app(request, app)
-    return _render_invite_page(request, app, app_config, next)
+    return _render_invite_page(request, app, app_config, next, prefill_code=code.strip())
 
 
 @router.post("/invite/validate")

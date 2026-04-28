@@ -142,6 +142,14 @@
                     <td class="local-date" data-utc="{{ c.expires_at.strftime('%Y-%m-%dT%H:%M:%SZ') if c.expires_at else '' }}">{{ c.expires_at.strftime('%Y-%m-%d') if c.expires_at else '—' }}</td>
                     <td class="local-time" data-utc="{{ c.created_at.strftime('%Y-%m-%dT%H:%M:%SZ') if c.created_at else '' }}">{{ c.created_at.strftime('%Y-%m-%d %H:%M') if c.created_at else '' }}</td>
                     <td>
+                        {% set app_cfg = apps.get(c.app_slug) %}
+                        {% if app_cfg and app_cfg.domains %}
+                          {% set invite_link = 'https://' ~ app_cfg.domains[0] ~ '/_auth/invite?code=' ~ c.code %}
+                          <button type="button" class="btn-copy" data-link="{{ invite_link }}"
+                                  style="font-size:0.75rem;padding:0.15rem 0.4rem;background:#3498db;color:#fff;border:none;border-radius:3px;cursor:pointer;">
+                            Copy link
+                          </button>
+                        {% endif %}
                         {% if c.active %}
                         <form method="POST" action="/_auth/admin/invites/codes/{{ c.id }}/revoke" style="display:inline"
                               onsubmit="return confirm('Revoke this code? Existing users are not affected.')">
@@ -154,7 +162,7 @@
                 </tr>
                 {% endfor %}
                 {% if not codes %}
-                <tr><td colspan="10" style="text-align:center; color:#999;">No invite codes</td></tr>
+                <tr><td colspan="11" style="text-align:center; color:#999;">No invite codes</td></tr>
                 {% endif %}
             </tbody>
         </table>
@@ -237,6 +245,41 @@
             </div>
             <button type="submit" class="btn-create">Grant</button>
         </form>
+        <script>
+            // Copy invite link to clipboard. Builds a URL of the form
+            // https://<app-domain>/_auth/invite?code=<CODE> that lands on the
+            // invite form pre-filled — recipient just clicks Submit.
+            document.querySelectorAll('button.btn-copy').forEach(function(btn) {
+                btn.addEventListener('click', function() {
+                    var link = btn.dataset.link;
+                    if (!link) return;
+                    var orig = btn.textContent;
+                    var done = function() {
+                        btn.textContent = 'Copied ✓';
+                        setTimeout(function() { btn.textContent = orig; }, 1500);
+                    };
+                    if (navigator.clipboard && navigator.clipboard.writeText) {
+                        navigator.clipboard.writeText(link).then(done, function() {
+                            var ta = document.createElement('textarea');
+                            ta.value = link;
+                            document.body.appendChild(ta);
+                            ta.select();
+                            document.execCommand('copy');
+                            document.body.removeChild(ta);
+                            done();
+                        });
+                    } else {
+                        var ta = document.createElement('textarea');
+                        ta.value = link;
+                        document.body.appendChild(ta);
+                        ta.select();
+                        document.execCommand('copy');
+                        document.body.removeChild(ta);
+                        done();
+                    }
+                });
+            });
+        </script>
         <script>
             // Convert multi-select values to comma-separated hidden field
             document.querySelector('form[action$="/invites/grant"]').addEventListener('submit', function(e) {
