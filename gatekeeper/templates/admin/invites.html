@@ -93,6 +93,10 @@
                 <label>Role (blank = app default)</label>
                 <input type="text" name="role" placeholder="e.g. full, default">
             </div>
+            <div class="field">
+                <label>Group (blank = none)</label>
+                <input type="text" name="group" placeholder="e.g. CLUB.PEN, JPL16G.PEN">
+            </div>
             <button type="submit" class="btn-create">Create</button>
         </form>
 
@@ -104,6 +108,7 @@
                     <th>App</th>
                     <th>Code</th>
                     <th>Role</th>
+                    <th>Group</th>
                     <th>Type</th>
                     <th>Created By</th>
                     <th>Uses</th>
@@ -119,6 +124,7 @@
                     <td>{{ c.app_slug }}</td>
                     <td><span class="code-copy">{{ c.code }}</span></td>
                     <td>{{ c.role or '—' }}</td>
+                    <td>{{ c.group or '—' }}</td>
                     <td>{{ c.code_type }}</td>
                     <td>{{ c.created_by_email or '—' }}</td>
                     <td>
