@@ -439,8 +439,12 @@ a browser-based shell without setting up a separate subdomain.
   `/_auth/verify`) since the gatekeeper domain isn't registered as an app.
 - Only users with `is_system_admin=true` get through; a 404 is returned
   when `terminal_enabled` is false.
-- ttyd's process is just `ssh jonnosan@localhost`, so the linux password
-  (and ideally TOTP via `pam_google_authenticator`) is the second factor.
+- ttyd runs `ssh jonnosan@localhost tmux new-session -A -s web`, so the
+  linux password (and ideally TOTP via `pam_google_authenticator`) is the
+  second factor. The `tmux new-session -A -s web` wrapper makes the shell
+  persistent across websocket disconnects — laptop sleep / network change
+  detaches the tmux client but the session keeps running, and reopening
+  `/_term/` reattaches to it.
 - Admin nav surfaces a "Terminal" link only when `terminal_enabled` is true.
 
 See `caddy/TERMINAL.md` for the full server install (ttyd, systemd unit,

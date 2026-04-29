@@ -36,16 +36,19 @@ Three layers of auth:
 
 ## Server install (run on `gatekeeper-staging.callendina.com`)
 
-### 1. Install ttyd
+### 1. Install ttyd and tmux
 
 ```bash
 # Debian/Ubuntu — package is usually current enough
 sudo apt-get update
-sudo apt-get install -y ttyd
+sudo apt-get install -y ttyd tmux
 
 # Or download the latest static binary from
 # https://github.com/tsl0922/ttyd/releases and place it at /usr/local/bin/ttyd.
 ```
+
+`tmux` is what makes the web terminal session persistent across websocket
+drops — see [Persistent sessions](#persistent-sessions) below.
 
 ### 2. Create the unprivileged ttyd user
 
@@ -127,6 +130,65 @@ google-authenticator -t -d -f -r 3 -R 30 -W
    the gatekeeper TOTP code → ttyd loads with an `ssh` password prompt.
 4. Enter the linux password → shell as `jonnosan` (no second TOTP, since
    PAM is configured to skip TOTP on the localhost handoff).
+
+## Persistent sessions
+
+ttyd launches `ssh jonnosan@localhost tmux new-session -A -s web` per
+websocket. The shell runs inside tmux session `web`, so when the websocket
+dies (laptop sleep, network change, accidental tab close) the tmux server
+keeps the session alive in the background. Reopening `/_term/` reattaches
+to the same session — running commands continue, scrollback is preserved.
+
+`tmux new-session -A -s web`:
+- `-A` = attach to session named `web` if one exists, else create it.
+- All ttyd connections share the single `web` session, so a second tab
+  mirrors the first (synchronised view). For independent terminals, open
+  new windows inside tmux (`Ctrl-b c`).
+
+Useful tmux bindings (default prefix `Ctrl-b`):
+- `Ctrl-b c` — new window
+- `Ctrl-b n` / `Ctrl-b p` — next / previous window
+- `Ctrl-b [` — enter copy mode (scrollback); `q` to exit
+- `Ctrl-b d` — detach (the tmux server keeps the session running)
+
+Resetting the session (e.g. after a runaway process):
+```bash
+ssh jonnosan@localhost tmux kill-session -t web
+# or, from inside the session:
+tmux kill-session
+```
+The next visit to `/_term/` will create a fresh `web` session.
+
+### Optional: skip the password prompt on reconnect
+
+By default each new ttyd connection runs a fresh ssh, so jonnosan's linux
+password is re-prompted on every reconnect. To make brief disconnects
+seamless, enable ssh `ControlMaster` for the ttyd user so the first
+authenticated connection is reused for a window of time:
+
+```bash
+sudo -u ttyd mkdir -p /var/lib/ttyd/.ssh
+sudo -u ttyd tee /var/lib/ttyd/.ssh/config > /dev/null <<'EOF'
+Host localhost
+    ControlMaster auto
+    ControlPath /var/lib/ttyd/.ssh/cm-%r@%h:%p
+    ControlPersist 4h
+EOF
+sudo chmod 700 /var/lib/ttyd/.ssh
+sudo chmod 600 /var/lib/ttyd/.ssh/config
+```
+
+Behaviour: the first ssh authenticates as normal; subsequent ssh
+invocations within 4h reuse the master socket without re-prompting. The
+master socket dies on its own after 4h idle, or when the box reboots.
+
+Tradeoff: this slightly weakens the "linux password as third factor"
+posture — once the master is up, anyone who can reach ttyd's websocket
+(i.e. anyone who clears the gatekeeper layer) gets the shell without
+re-proving the password. The gatekeeper layer (OAuth + system_admin +
+gatekeeper TOTP) is still the primary gate; you're trading one of the
+defences-in-depth for ergonomics. Skip this section if that's not a
+trade you want to make.
 
 ## Locking it down further
 

@@ -13,6 +13,12 @@ Group=ttyd
 # We launch ssh as the entrypoint so the user has to authenticate to sshd
 # (linux password + optional TOTP) before getting a shell. ttyd itself runs
 # as the unprivileged 'ttyd' user and has no shell access of its own.
+#
+# `tmux new-session -A -s web` makes the shell live inside a persistent
+# tmux session named "web". When the websocket dies (laptop sleep, network
+# change, etc.) ttyd kills ssh, ssh's tmux client detaches, but the tmux
+# server stays running with the session intact. Reopening /_term/ reattaches
+# to the same session, restoring the in-progress shell.
 ExecStart=/usr/bin/ttyd \
     --interface 127.0.0.1 \
     --port 7681 \
@@ -23,7 +29,8 @@ ExecStart=/usr/bin/ttyd \
     /usr/bin/ssh -tt \
         -o StrictHostKeyChecking=accept-new \
         -o UserKnownHostsFile=/var/lib/ttyd/known_hosts \
-        jonnosan@localhost
+        jonnosan@localhost \
+        tmux new-session -A -s web
 
 Restart=on-failure
 RestartSec=5
