@@ -9,6 +9,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from gatekeeper._time import utcnow
 from gatekeeper.database import get_db
 from gatekeeper.config import GatekeeperConfig, AppConfig
 from gatekeeper.models import InviteCode, InviteUse, InviteWaitlist, InviteUserLimit, User
@@ -70,7 +71,7 @@ def sign_invite_cookie(invite_use_id: int, code_id: int, timestamp: int,
 
 def make_invite_cookie(invite_use_id: int, code_id: int,
                        secret_key: str, app_slug: str) -> str:
-    ts = int(datetime.datetime.utcnow().timestamp())
+    ts = int(utcnow().timestamp())
     sig = sign_invite_cookie(invite_use_id, code_id, ts, secret_key, app_slug)
     return f"{invite_use_id}:{code_id}:{ts}:{sig}"
 
@@ -89,7 +90,7 @@ def verify_invite_cookie(cookie_value: str, secret_key: str,
                                       secret_key, app_slug)
         if not hmac.compare_digest(sig, expected):
             return None
-        age = datetime.datetime.utcnow().timestamp() - ts
+        age = utcnow().timestamp() - ts
         if age > max_age_days * 86400:
             return None
         return invite_use_id
@@ -100,7 +101,7 @@ def verify_invite_cookie(cookie_value: str, secret_key: str,
 async def validate_invite_code_db(db: AsyncSession, app_slug: str,
                                   code_str: str) -> InviteCode | None:
     """Look up a valid, active, non-expired, non-exhausted invite code (case-insensitive)."""
-    now = datetime.datetime.utcnow()
+    now = utcnow()
     from sqlalchemy import func as sa_func
     stmt = select(InviteCode).where(
         InviteCode.app_slug == app_slug,
@@ -330,7 +331,7 @@ async def create_personal_invite(
         }, status_code=429)
 
     code = generate_invite_code()
-    expires_at = (datetime.datetime.utcnow() + datetime.timedelta(days=pi.expiry_days)
+    expires_at = (utcnow() + datetime.timedelta(days=pi.expiry_days)
                   if pi.expiry_days > 0 else None)
     invite = InviteCode(
         app_slug=app_config.slug,
@@ -386,7 +387,7 @@ async def invite_status(
     result = await db.execute(stmt)
     codes = result.scalars().all()
 
-    now = datetime.datetime.utcnow()
+    now = utcnow()
     total_created = len(codes)
     used_codes = []
     unused_codes = []
@@ -461,7 +462,7 @@ async def create_bulk_code(
         return JSONResponse({"error": f"Invalid role '{role}'. Valid: {app_config.roles}"}, status_code=400)
 
     code = custom_code or generate_invite_code()
-    expires_at = (datetime.datetime.utcnow() + datetime.timedelta(days=expiry_days)
+    expires_at = (utcnow() + datetime.timedelta(days=expiry_days)
                   if expiry_days > 0 else None)
 
     invite = InviteCode(

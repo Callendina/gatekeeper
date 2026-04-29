@@ -9,6 +9,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from gatekeeper._time import utcnow
 from gatekeeper.database import get_db
 from gatekeeper.config import GatekeeperConfig
 from gatekeeper.models import User, UserAppRole, MagicLink, InviteUse
@@ -67,7 +68,7 @@ async def _check_email_rate_limit(
     db: AsyncSession, email: str, app_slug: str, min_interval_minutes: int
 ) -> bool:
     """Returns True if allowed (no recent send to this email for this app)."""
-    cutoff = datetime.datetime.utcnow() - datetime.timedelta(minutes=min_interval_minutes)
+    cutoff = utcnow() - datetime.timedelta(minutes=min_interval_minutes)
     stmt = select(MagicLink).where(
         MagicLink.email == email,
         MagicLink.app_slug == app_slug,
@@ -140,7 +141,7 @@ async def send_magic_link(
 
     # Generate magic link
     token = secrets.token_urlsafe(32)
-    expires_at = datetime.datetime.utcnow() + datetime.timedelta(
+    expires_at = utcnow() + datetime.timedelta(
         minutes=app_config.magic_link.link_expiry_minutes
     )
 
@@ -207,7 +208,7 @@ async def verify_magic_link(
     if ml is None:
         return HTMLResponse("<h2>Invalid or expired link</h2>", status_code=400)
 
-    now = datetime.datetime.utcnow()
+    now = utcnow()
     if ml.expires_at < now:
         return HTMLResponse("<h2>This link has expired</h2><p>Please request a new one.</p>", status_code=400)
 
@@ -413,7 +414,7 @@ def cleanup_expired_magic_links_sync():
 async def cleanup_expired_magic_links(db: AsyncSession):
     """Remove magic links that have expired or been used (older than 1 day)."""
     from sqlalchemy import delete
-    cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=1)
+    cutoff = utcnow() - datetime.timedelta(days=1)
     await db.execute(
         delete(MagicLink).where(MagicLink.expires_at < cutoff)
     )

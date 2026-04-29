@@ -1,6 +1,7 @@
 import datetime
 from sqlalchemy import String, Integer, Boolean, DateTime, Text, ForeignKey, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from gatekeeper._time import utcnow
 from gatekeeper.database import Base
 
 
@@ -12,7 +13,7 @@ class User(Base):
     display_name: Mapped[str] = mapped_column(String(255), nullable=False)
     is_system_admin: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime, default=datetime.datetime.utcnow
+        DateTime, default=utcnow
     )
 
     oauth_accounts: Mapped[list["OAuthAccount"]] = relationship(back_populates="user")
@@ -61,7 +62,7 @@ class Session(Base):
     app_slug: Mapped[str] = mapped_column(String(100), nullable=False)
     ip_address: Mapped[str] = mapped_column(String(45), nullable=False)
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime, default=datetime.datetime.utcnow
+        DateTime, default=utcnow
     )
     expires_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False)
     totp_verified_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
@@ -80,7 +81,7 @@ class UserTOTP(Base):
     # Highest accepted TOTP counter (floor(unix_time / 30)). Rejects replay.
     last_counter: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime, default=datetime.datetime.utcnow
+        DateTime, default=utcnow
     )
 
 
@@ -91,7 +92,7 @@ class IPBlocklist(Base):
     ip_address: Mapped[str] = mapped_column(String(45), unique=True, nullable=False, index=True)
     reason: Mapped[str] = mapped_column(Text, nullable=True)
     blocked_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime, default=datetime.datetime.utcnow
+        DateTime, default=utcnow
     )
     blocked_by: Mapped[str] = mapped_column(String(255), nullable=True)
 
@@ -112,7 +113,7 @@ class AnonymousUsage(Base):
     api_call_count: Mapped[int] = mapped_column(Integer, default=0)
     # Start of the current tracking window
     window_start: Mapped[datetime.datetime] = mapped_column(
-        DateTime, default=datetime.datetime.utcnow
+        DateTime, default=utcnow
     )
 
     __table_args__ = (
@@ -132,7 +133,7 @@ class APIKey(Base):
     key_type: Mapped[str] = mapped_column(String(20), nullable=False)
     ip_address: Mapped[str] = mapped_column(String(45), nullable=False)
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime, default=datetime.datetime.utcnow
+        DateTime, default=utcnow
     )
     expires_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False)
     # Optional per-key rate limit override (requests/min). 0 = use default.
@@ -150,7 +151,7 @@ class AccessLog(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     timestamp: Mapped[datetime.datetime] = mapped_column(
-        DateTime, default=datetime.datetime.utcnow, index=True
+        DateTime, default=utcnow, index=True
     )
     ip_address: Mapped[str] = mapped_column(String(45), nullable=False, index=True)
     app_slug: Mapped[str] = mapped_column(String(100), nullable=False)
@@ -178,7 +179,7 @@ class InviteCode(Base):
     group: Mapped[str | None] = mapped_column(String(100), nullable=True, default=None)
     expires_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime, default=datetime.datetime.utcnow
+        DateTime, default=utcnow
     )
 
     uses: Mapped[list["InviteUse"]] = relationship(back_populates="invite_code")
@@ -196,7 +197,7 @@ class InviteUse(Base):
     used_by_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     ip_address: Mapped[str] = mapped_column(String(45), nullable=False)
     granted_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime, default=datetime.datetime.utcnow
+        DateTime, default=utcnow
     )
 
     invite_code: Mapped["InviteCode"] = relationship(back_populates="uses")
@@ -213,7 +214,7 @@ class InviteWaitlist(Base):
     invite_code_id: Mapped[int | None] = mapped_column(ForeignKey("invite_codes.id"), nullable=True)
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime, default=datetime.datetime.utcnow
+        DateTime, default=utcnow
     )
     reviewed_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
     reviewed_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -246,7 +247,7 @@ class MagicLink(Base):
     ip_address: Mapped[str] = mapped_column(String(45), nullable=False)
     has_invite: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime, default=datetime.datetime.utcnow
+        DateTime, default=utcnow
     )
     expires_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False)
     used_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)

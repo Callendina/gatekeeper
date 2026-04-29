@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import select, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from gatekeeper._time import utcnow
 from gatekeeper.database import get_db
 from gatekeeper.config import GatekeeperConfig
 from gatekeeper.models import APIKey, User, UserAppRole
@@ -23,7 +24,7 @@ _config: GatekeeperConfig = None
 
 async def count_active_keys(db: AsyncSession, app_slug: str) -> dict:
     """Count active (non-expired) API keys by tier for an app."""
-    now = datetime.datetime.utcnow()
+    now = utcnow()
     base = select(func.count(APIKey.id)).where(
         APIKey.app_slug == app_slug,
         APIKey.expires_at > now,
@@ -92,7 +93,7 @@ async def issue_registered_key(
         select(func.count(APIKey.id)).where(
             APIKey.user_id == user.id, APIKey.app_slug == app.slug,
             APIKey.key_type == "registered",
-            APIKey.expires_at > datetime.datetime.utcnow(),
+            APIKey.expires_at > utcnow(),
         )
     )
     effective_count = counts["registered"] - (existing or 0)
@@ -116,7 +117,7 @@ async def issue_registered_key(
     )
 
     key = secrets.token_urlsafe(32)
-    expires_at = datetime.datetime.utcnow() + datetime.timedelta(
+    expires_at = utcnow() + datetime.timedelta(
         seconds=app.api_access.registered_key_duration_seconds
     )
 
@@ -214,7 +215,7 @@ async def issue_temp_key(
     # Reuse an existing active temp key if one exists for this user/session
     is_authenticated = user is not None
     duration = app.api_access.temp_key_duration_for(is_authenticated)
-    now = datetime.datetime.utcnow()
+    now = utcnow()
 
     if is_authenticated:
         existing_stmt = select(APIKey).where(
@@ -275,7 +276,7 @@ async def validate_api_key(
     stmt = select(APIKey).where(
         APIKey.key == key,
         APIKey.app_slug == app_slug,
-        APIKey.expires_at > datetime.datetime.utcnow(),
+        APIKey.expires_at > utcnow(),
     )
     result = await db.execute(stmt)
     api_key = result.scalar_one_or_none()
@@ -308,6 +309,6 @@ async def validate_api_key(
 
 async def cleanup_expired_keys(db: AsyncSession):
     await db.execute(
-        delete(APIKey).where(APIKey.expires_at < datetime.datetime.utcnow())
+        delete(APIKey).where(APIKey.expires_at < utcnow())
     )
     await db.commit()

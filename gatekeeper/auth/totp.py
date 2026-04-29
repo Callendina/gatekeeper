@@ -35,6 +35,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from gatekeeper._time import utcnow
 from gatekeeper.config import GatekeeperConfig
 from gatekeeper.database import get_db
 from gatekeeper.middleware.ip_block import block_ip, is_ip_blocked
@@ -192,7 +193,7 @@ async def _resolve_session_user(
         return None, None
     stmt = select(Session).where(
         Session.token == session_token,
-        Session.expires_at > datetime.datetime.utcnow(),
+        Session.expires_at > utcnow(),
     )
     session = await db.scalar(stmt)
     if session is None or session.user_id is None:
@@ -307,9 +308,9 @@ async def enroll_confirm(
         }, status_code=400)
 
     _clear_failures(ip)
-    rec.confirmed_at = datetime.datetime.utcnow()
+    rec.confirmed_at = utcnow()
     rec.last_counter = new_counter
-    session.totp_verified_at = datetime.datetime.utcnow()
+    session.totp_verified_at = utcnow()
     await db.commit()
 
     return RedirectResponse(url=_safe_next(next), status_code=302)
@@ -387,7 +388,7 @@ async def verify_post(
 
     _clear_failures(ip)
     rec.last_counter = new_counter
-    session.totp_verified_at = datetime.datetime.utcnow()
+    session.totp_verified_at = utcnow()
     await db.commit()
 
     return RedirectResponse(url=_safe_next(next), status_code=302)

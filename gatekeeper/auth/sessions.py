@@ -2,6 +2,7 @@ import secrets
 import datetime
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
+from gatekeeper._time import utcnow
 from gatekeeper.models import Session, User, UserAppRole
 
 
@@ -17,7 +18,7 @@ async def create_session(
         user_id=user_id,
         app_slug=app_slug,
         ip_address=ip_address,
-        expires_at=datetime.datetime.utcnow()
+        expires_at=utcnow()
         + datetime.timedelta(hours=SESSION_DURATION_HOURS),
     )
     db.add(session)
@@ -32,7 +33,7 @@ async def validate_session(
     stmt = select(Session).where(
         Session.token == token,
         Session.app_slug == app_slug,
-        Session.expires_at > datetime.datetime.utcnow(),
+        Session.expires_at > utcnow(),
     )
     result = await db.execute(stmt)
     session = result.scalar_one_or_none()
@@ -69,6 +70,6 @@ async def delete_session(db: AsyncSession, token: str):
 
 async def cleanup_expired_sessions(db: AsyncSession):
     await db.execute(
-        delete(Session).where(Session.expires_at < datetime.datetime.utcnow())
+        delete(Session).where(Session.expires_at < utcnow())
     )
     await db.commit()

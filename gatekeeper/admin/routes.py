@@ -6,6 +6,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import select, func, desc, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from gatekeeper._time import utcnow
 from gatekeeper.database import get_db
 from gatekeeper.config import GatekeeperConfig
 from gatekeeper.models import User, UserAppRole, OAuthAccount, IPBlocklist, AccessLog, Session, APIKey, InviteCode, InviteUse, InviteWaitlist, InviteUserLimit, UserTOTP
@@ -43,7 +44,7 @@ async def _require_admin(request: Request, db: AsyncSession):
         if not authenticated_user:
             stmt = select(Session).where(
                 Session.token == session_token,
-                Session.expires_at > datetime.datetime.utcnow(),
+                Session.expires_at > utcnow(),
             )
             result = await db.execute(stmt)
             session = result.scalar_one_or_none()
@@ -427,7 +428,7 @@ async def api_keys_page(
     from gatekeeper.middleware.rate_limit import _api_key_log
     import time
 
-    now = datetime.datetime.utcnow()
+    now = utcnow()
     stmt = select(APIKey).where(APIKey.expires_at > now).order_by(APIKey.created_at.desc())
     if app_slug:
         stmt = stmt.where(APIKey.app_slug == app_slug)
@@ -607,7 +608,7 @@ async def admin_create_code(
 
     code = custom_code.strip() or generate_invite_code()
     expires_at = (
-        datetime.datetime.utcnow() + datetime.timedelta(days=expiry_days)
+        utcnow() + datetime.timedelta(days=expiry_days)
         if expiry_days > 0 else None
     )
 
@@ -665,7 +666,7 @@ async def approve_waitlist(
     app_config = _config.apps.get(wl.app_slug)
     expiry_days = (app_config.invite.personal_invites.expiry_days
                    if app_config else 7)
-    expires_at = datetime.datetime.utcnow() + datetime.timedelta(days=expiry_days)
+    expires_at = utcnow() + datetime.timedelta(days=expiry_days)
 
     code = generate_invite_code()
     invite = InviteCode(
@@ -677,7 +678,7 @@ async def approve_waitlist(
 
     wl.status = "approved"
     wl.invite_code_id = invite.id
-    wl.reviewed_at = datetime.datetime.utcnow()
+    wl.reviewed_at = utcnow()
     wl.reviewed_by = admin
     await db.commit()
 
@@ -703,7 +704,7 @@ async def deny_waitlist(
 
     wl.status = "denied"
     wl.reason = reason or None
-    wl.reviewed_at = datetime.datetime.utcnow()
+    wl.reviewed_at = utcnow()
     wl.reviewed_by = admin
 
     # Add IP to blocklist
@@ -778,7 +779,7 @@ async def analytics_page(
         return redirect
 
     days = min(max(days, 1), 90)
-    cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=days)
+    cutoff = utcnow() - datetime.timedelta(days=days)
 
     # Build base filter
     filters = [AccessLog.timestamp >= cutoff]

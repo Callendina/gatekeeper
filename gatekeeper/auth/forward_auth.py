@@ -16,6 +16,7 @@ from fastapi import APIRouter, Request, Response, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from gatekeeper._time import utcnow
 from gatekeeper.database import get_db
 from gatekeeper.config import GatekeeperConfig, AppConfig
 from gatekeeper.auth.sessions import validate_session, create_session
@@ -79,7 +80,7 @@ async def _check_totp_gate(
 
     needs_step_up = session.totp_verified_at is None
     if not needs_step_up and mfa.step_up_seconds > 0:
-        age = (datetime.datetime.utcnow() - session.totp_verified_at).total_seconds()
+        age = (utcnow() - session.totp_verified_at).total_seconds()
         if age > mfa.step_up_seconds:
             needs_step_up = True
 
@@ -323,12 +324,12 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
             max_hours = app.api_access.temp_key_max_lifetime_hours
             if max_hours and api_key_obj.created_at:
                 hard_limit = api_key_obj.created_at + datetime.timedelta(hours=max_hours)
-                if datetime.datetime.utcnow() >= hard_limit:
+                if utcnow() >= hard_limit:
                     await _log(db, ip, app.slug, path, method, api_user.email if api_user else None, "temp_key_expired", **_extra)
                     return Response(status_code=401, content="Temp key max lifetime exceeded. Please request a new key.")
             is_auth = api_key_obj.user_id is not None
             duration = app.api_access.temp_key_duration_for(is_auth)
-            new_expiry = datetime.datetime.utcnow() + datetime.timedelta(
+            new_expiry = utcnow() + datetime.timedelta(
                 minutes=duration
             )
             if max_hours and api_key_obj.created_at:
@@ -485,7 +486,7 @@ async def verify_system_admin(request: Request, db: AsyncSession = Depends(get_d
             session = await db.scalar(
                 select(Session).where(
                     Session.token == session_token,
-                    Session.expires_at > datetime.datetime.utcnow(),
+                    Session.expires_at > utcnow(),
                 )
             )
             if session and session.user_id:

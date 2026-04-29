@@ -13,6 +13,8 @@ from enum import Enum
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from gatekeeper._time import utcnow
 from gatekeeper.models import AnonymousUsage
 from gatekeeper.config import AppConfig
 
@@ -35,7 +37,7 @@ async def check_paywall(
     if is_api_mode:
         # API mode: increment on every call, track by IP
         usage = await _get_or_create_usage(db, ip, "ip", app.slug, ip)
-        now = datetime.datetime.utcnow()
+        now = utcnow()
         window_duration = datetime.timedelta(hours=1)
         if now - usage.window_start > window_duration:
             usage.api_call_count = 0
@@ -52,7 +54,7 @@ async def check_paywall(
         tracking_key = session_token if session_token else ip
         tracking_type = "cookie" if session_token else "ip"
         usage = await _get_or_create_usage(db, tracking_key, tracking_type, app.slug, ip)
-        now = datetime.datetime.utcnow()
+        now = utcnow()
         window_duration = datetime.timedelta(weeks=1)
         if now - usage.window_start > window_duration:
             usage.session_count = 0
@@ -80,7 +82,7 @@ async def record_new_session(
         return PaywallResult.ALLOWED
 
     usage = await _get_or_create_usage(db, ip, "ip", app.slug, ip)
-    now = datetime.datetime.utcnow()
+    now = utcnow()
     window_duration = datetime.timedelta(weeks=1)
     if now - usage.window_start > window_duration:
         usage.session_count = 0
@@ -116,7 +118,7 @@ async def _get_or_create_usage(
             ip_address=ip,
             session_count=0,
             api_call_count=0,
-            window_start=datetime.datetime.utcnow(),
+            window_start=utcnow(),
         )
         try:
             db.add(usage)

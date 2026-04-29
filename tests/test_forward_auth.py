@@ -2,6 +2,7 @@
 import datetime
 import secrets
 import pytest
+from gatekeeper._time import utcnow
 from gatekeeper.models import User, UserAppRole, APIKey
 
 
@@ -90,7 +91,7 @@ async def _create_user_with_key(db, email, app_slug, role="user"):
     db.add(APIKey(
         key=key_str, app_slug=app_slug, user_id=user.id,
         key_type="registered", ip_address="127.0.0.1",
-        expires_at=datetime.datetime.utcnow() + datetime.timedelta(days=365),
+        expires_at=utcnow() + datetime.timedelta(days=365),
     ))
     await db.commit()
     return key_str
@@ -102,7 +103,7 @@ async def _create_anon_temp_key(db, app_slug):
     db.add(APIKey(
         key=key_str, app_slug=app_slug, user_id=None,
         key_type="temp", ip_address="127.0.0.1",
-        expires_at=datetime.datetime.utcnow() + datetime.timedelta(minutes=30),
+        expires_at=utcnow() + datetime.timedelta(minutes=30),
     ))
     await db.commit()
     return key_str

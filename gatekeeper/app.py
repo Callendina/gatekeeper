@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.middleware.sessions import SessionMiddleware
 
+from gatekeeper._time import utcnow
 from gatekeeper.config import load_config
 from gatekeeper.database import init_db
 from gatekeeper.auth.forward_auth import router as forward_auth_router, init_forward_auth
@@ -142,7 +143,7 @@ async def status_keys(app_slug: str, request: Request, db: AsyncSession = Depend
     if not provided_key or provided_key != app_config.admin_api_key:
         return JSONResponse({"error": "Invalid or missing X-Admin-Key"}, status_code=401)
 
-    now = datetime.datetime.utcnow()
+    now = utcnow()
     stmt = select(APIKey).where(
         APIKey.app_slug == app_slug,
         APIKey.expires_at > now,

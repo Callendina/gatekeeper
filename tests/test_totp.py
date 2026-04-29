@@ -6,6 +6,7 @@ import time
 import pyotp
 import pytest
 
+from gatekeeper._time import utcnow
 from gatekeeper.auth.totp import (
     derive_secret,
     issuer_for,
@@ -135,7 +136,7 @@ async def _make_user_with_session(db, email, app_slug, role="user", totp_verifie
         user_id=user.id,
         app_slug=app_slug,
         ip_address="127.0.0.1",
-        expires_at=datetime.datetime.utcnow() + datetime.timedelta(days=30),
+        expires_at=utcnow() + datetime.timedelta(days=30),
         totp_verified_at=totp_verified_at,
     ))
     await db.commit()
@@ -147,7 +148,7 @@ async def _enroll_user(db, user_id, master_key="test-secret-key"):
     rec = UserTOTP(
         user_id=user_id,
         key_num=0,
-        confirmed_at=datetime.datetime.utcnow(),
+        confirmed_at=utcnow(),
         last_counter=0,
     )
     db.add(rec)
@@ -188,7 +189,7 @@ async def test_role_triggered_mfa_redirects_enrolled_no_stepup_to_verify(client,
 @pytest.mark.asyncio
 async def test_role_triggered_mfa_passes_with_fresh_step_up(client, db):
     """Admin, enrolled, with a recent totp_verified_at → 200."""
-    fresh = datetime.datetime.utcnow() - datetime.timedelta(minutes=5)
+    fresh = utcnow() - datetime.timedelta(minutes=5)
     user, token = await _make_user_with_session(
         db, "admin@test.com", "mfaapp", role="admin", totp_verified_at=fresh
     )
@@ -205,7 +206,7 @@ async def test_role_triggered_mfa_passes_with_fresh_step_up(client, db):
 @pytest.mark.asyncio
 async def test_role_triggered_mfa_step_up_expired(client, db):
     """Admin with step_up_minutes=30 and totp_verified_at older than that → /verify."""
-    stale = datetime.datetime.utcnow() - datetime.timedelta(minutes=45)
+    stale = utcnow() - datetime.timedelta(minutes=45)
     user, token = await _make_user_with_session(
         db, "admin@test.com", "mfaapp", role="admin", totp_verified_at=stale
     )
@@ -368,7 +369,7 @@ async def test_admin_reset_bumps_key_num(client, db):
     await db.flush()
     rec = UserTOTP(
         user_id=user.id, key_num=0,
-        confirmed_at=datetime.datetime.utcnow(), last_counter=999,
+        confirmed_at=utcnow(), last_counter=999,
     )
     db.add(rec)
     await db.commit()
