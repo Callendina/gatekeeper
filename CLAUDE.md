@@ -336,6 +336,33 @@ user and exposes a **Reset MFA** button. Reset:
 The user must re-enroll on next protected access — the old authenticator
 entry stops working immediately.
 
+### Self-recovery via SSH (admin lockout)
+
+If you're locked out of `/_auth/admin/*` because you lost your TOTP
+device and there's no other system admin to click **Reset MFA**, you
+need shell access to the gatekeeper server. Two options:
+
+**Option 1 — disable the gate, re-enroll, re-enable:**
+```bash
+# 1. Edit config.yaml: set system_admin_requires_totp: false
+# 2. Restart so the change takes effect
+sudo systemctl restart gatekeeper
+# 3. Sign in to /_auth/admin in your browser, hit Reset MFA on yourself,
+#    then visit any admin page → redirected to /_auth/totp/enroll
+# 4. Re-edit config.yaml: set system_admin_requires_totp: true
+sudo systemctl restart gatekeeper
+```
+
+**Option 2 — bump key_num directly in SQLite (faster):**
+```bash
+sqlite3 gatekeeper.db \
+  "UPDATE user_totp SET key_num = key_num + 1, confirmed_at = NULL, last_counter = 0 WHERE user_id = (SELECT id FROM users WHERE email = 'you@example.com');"
+sqlite3 gatekeeper.db \
+  "UPDATE sessions SET totp_verified_at = NULL WHERE user_id = (SELECT id FROM users WHERE email = 'you@example.com');"
+```
+Next visit to `/_auth/admin` redirects to `/_auth/totp/enroll` with a
+fresh secret. No restart needed — the secret is derived on each request.
+
 ### Interaction with `/_term/`
 
 The web terminal stays gated by sshd/PAM (linux password + optional
