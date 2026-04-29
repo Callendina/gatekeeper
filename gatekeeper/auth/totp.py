@@ -82,11 +82,13 @@ def issuer_for(config: GatekeeperConfig) -> str:
 
 
 def qr_svg(uri: str) -> str:
-    """Render the otpauth URI as an inline SVG QR code. The width/height
-    attributes are present but the template CSS overrides them."""
+    """Render the otpauth URI as an inline SVG QR code. omitsize=True so
+    segno emits a viewBox instead of fixed width/height — without it,
+    browsers clip the QR when CSS overrides the dimensions, producing an
+    unreadable image."""
     qr = segno.make_qr(uri)
     buf = io.BytesIO()
-    qr.save(buf, kind="svg", scale=6, border=2, xmldecl=False)
+    qr.save(buf, kind="svg", scale=6, border=2, xmldecl=False, omitsize=True)
     return buf.getvalue().decode("utf-8")
 
 
