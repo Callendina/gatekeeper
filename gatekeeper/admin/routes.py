@@ -149,6 +149,7 @@ async def admin_dashboard(request: Request, db: AsyncSession = Depends(get_db)):
         "admin_email": admin,
         "environment": _config.environment,
         "terminal_enabled": _config.terminal_enabled,
+        "corkboard_enabled": _config.corkboard_enabled,
     })
 
 
@@ -182,6 +183,7 @@ async def list_users(request: Request, db: AsyncSession = Depends(get_db)):
         "admin_email": admin,
         "environment": _config.environment,
         "terminal_enabled": _config.terminal_enabled,
+        "corkboard_enabled": _config.corkboard_enabled,
         "pending_waitlist": await _pending_waitlist_count(db),
         "pending_invite": await _pending_invite_count(db),
     })
@@ -361,6 +363,7 @@ async def ip_blocklist_page(request: Request, db: AsyncSession = Depends(get_db)
         "admin_email": admin,
         "environment": _config.environment,
         "terminal_enabled": _config.terminal_enabled,
+        "corkboard_enabled": _config.corkboard_enabled,
         "pending_waitlist": await _pending_waitlist_count(db),
     })
 
@@ -432,6 +435,7 @@ async def access_log_page(
         "admin_email": admin,
         "environment": _config.environment,
         "terminal_enabled": _config.terminal_enabled,
+        "corkboard_enabled": _config.corkboard_enabled,
         "pending_waitlist": await _pending_waitlist_count(db),
     })
 
@@ -518,6 +522,7 @@ async def api_keys_page(
         "admin_email": admin,
         "environment": _config.environment,
         "terminal_enabled": _config.terminal_enabled,
+        "corkboard_enabled": _config.corkboard_enabled,
         "pending_waitlist": await _pending_waitlist_count(db),
     })
 
@@ -606,6 +611,7 @@ async def invites_page(
         "admin_email": admin,
         "environment": _config.environment,
         "terminal_enabled": _config.terminal_enabled,
+        "corkboard_enabled": _config.corkboard_enabled,
         "pending_waitlist": await _pending_waitlist_count(db),
     })
 
@@ -884,5 +890,6 @@ async def analytics_page(
         "admin_email": admin,
         "environment": _config.environment,
         "terminal_enabled": _config.terminal_enabled,
+        "corkboard_enabled": _config.corkboard_enabled,
         "pending_waitlist": await _pending_waitlist_count(db),
     })

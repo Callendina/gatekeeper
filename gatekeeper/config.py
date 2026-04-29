@@ -193,6 +193,10 @@ class GatekeeperConfig:
     # When True, /_auth/verify-system-admin is enabled and the admin UI
     # surfaces a "Terminal" link to /_term/. Intended for staging only.
     terminal_enabled: bool = False
+    # When True, the admin UI surfaces a "Corkboard" link to /corkboard/
+    # (admin-only roadmap/bug forum hosted on the same domain). Requires
+    # corkboard to be running and a `handle /corkboard/*` block in Caddy.
+    corkboard_enabled: bool = False
     # Issuer name shown in users' authenticator apps (otpauth URI). If
     # `environment` is set, it is appended (e.g. "Gatekeeper - STAGING").
     totp_issuer: str = "Gatekeeper"
@@ -351,6 +355,7 @@ def load_config(path: str = "config.yaml") -> GatekeeperConfig:
         secret_key=server.get("secret_key", ""),
         environment=server.get("environment", ""),
         terminal_enabled=server.get("terminal_enabled", False),
+        corkboard_enabled=server.get("corkboard_enabled", False),
         totp_issuer=server.get("totp_issuer", "Gatekeeper"),
         system_admin_requires_totp=server.get("system_admin_requires_totp", False),
         database_path=db.get("path", "gatekeeper.db"),

@@ -14,6 +14,9 @@ server:
   # TOTP/MFA settings (per-app gating goes under each app's `mfa:` block)
   # totp_issuer: "Callendina Gatekeeper"   # shown in users' authenticator apps
   # system_admin_requires_totp: true        # require TOTP for /_auth/admin and /_term/
+  # Admin-UI nav links to system-admin-only tools on the same domain.
+  # terminal_enabled: true                  # surface "Terminal" link to /_term/
+  # corkboard_enabled: true                 # surface "Corkboard" link to /corkboard/
 
 database:
   # SQLite database path (relative to working directory)
