@@ -113,6 +113,38 @@ class InviteConfig:
 
 
 @dataclass
+class MFAConfig:
+    """Per-app MFA (TOTP) gating.
+
+    - required_for_roles: any user whose role for this app is in this list
+      is forced to enroll on sign-in (eager) and must verify according to
+      the step-up cadence on every gated request.
+    - required_for_paths: glob patterns; any matching path triggers TOTP for
+      authenticated users hitting it (lazy enrollment if not yet enrolled).
+    - step_up_minutes / step_up_days: how long a TOTP verification stays
+      valid within a session. 0 (the default) means once-per-session: as
+      long as the session cookie lives and totp_verified_at is set on it,
+      no re-prompt. step_up_minutes takes precedence if both are set > 0.
+    """
+    required_for_roles: list[str] = field(default_factory=list)
+    required_for_paths: list[str] = field(default_factory=list)
+    step_up_minutes: int = 0
+    step_up_days: int = 0
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.required_for_roles or self.required_for_paths)
+
+    @property
+    def step_up_seconds(self) -> int:
+        if self.step_up_minutes > 0:
+            return self.step_up_minutes * 60
+        if self.step_up_days > 0:
+            return self.step_up_days * 86400
+        return 0
+
+
+@dataclass
 class MagicLinkConfig:
     enabled: bool = False
     link_expiry_minutes: int = 15
@@ -144,6 +176,7 @@ class AppConfig:
     rate_limit: RateLimitConfig = field(default_factory=RateLimitConfig)
     invite: InviteConfig = field(default_factory=InviteConfig)
     magic_link: MagicLinkConfig = field(default_factory=MagicLinkConfig)
+    mfa: MFAConfig = field(default_factory=MFAConfig)
     login_html_file: str = ""
     admin_api_key: str = ""  # secret key for app-level admin API (e.g. listing active keys)
     allowed_emails: list[str] = field(default_factory=list)  # empty = anyone can sign in
@@ -160,6 +193,13 @@ class GatekeeperConfig:
     # When True, /_auth/verify-system-admin is enabled and the admin UI
     # surfaces a "Terminal" link to /_term/. Intended for staging only.
     terminal_enabled: bool = False
+    # Issuer name shown in users' authenticator apps (otpauth URI). If
+    # `environment` is set, it is appended (e.g. "Gatekeeper - STAGING").
+    totp_issuer: str = "Gatekeeper"
+    # When True, system-admin gates (/_auth/admin/*, /_term/) require TOTP
+    # in addition to is_system_admin. Honours each user's existing MFA
+    # enrollment; admins must enroll on first protected access.
+    system_admin_requires_totp: bool = False
     database_path: str = "gatekeeper.db"
     google_client_id: str = ""
     google_client_secret: str = ""
@@ -243,6 +283,13 @@ def _parse_app_config(slug: str, app_raw: dict) -> AppConfig:
         pending_html_file=ml_raw.get("pending_html_file", ""),
         sent_html_file=ml_raw.get("sent_html_file", ""),
     )
+    mfa_raw = app_raw.get("mfa", {}) or {}
+    mfa = MFAConfig(
+        required_for_roles=mfa_raw.get("required_for_roles", []) or [],
+        required_for_paths=mfa_raw.get("required_for_paths", []) or [],
+        step_up_minutes=mfa_raw.get("step_up_minutes", 0),
+        step_up_days=mfa_raw.get("step_up_days", 0),
+    )
     return AppConfig(
         slug=slug,
         name=app_raw.get("name", slug),
@@ -253,6 +300,7 @@ def _parse_app_config(slug: str, app_raw: dict) -> AppConfig:
         rate_limit=rate_limit,
         invite=invite,
         magic_link=magic_link,
+        mfa=mfa,
         roles=app_raw.get("roles", ["user", "admin"]),
         login_html_file=app_raw.get("login_html_file", ""),
         admin_api_key=app_raw.get("admin_api_key", ""),
@@ -303,6 +351,8 @@ def load_config(path: str = "config.yaml") -> GatekeeperConfig:
         secret_key=server.get("secret_key", ""),
         environment=server.get("environment", ""),
         terminal_enabled=server.get("terminal_enabled", False),
+        totp_issuer=server.get("totp_issuer", "Gatekeeper"),
+        system_admin_requires_totp=server.get("system_admin_requires_totp", False),
         database_path=db.get("path", "gatekeeper.db"),
         google_client_id=oauth_google.get("client_id", ""),
         google_client_secret=oauth_google.get("client_secret", ""),

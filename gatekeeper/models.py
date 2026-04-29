@@ -64,8 +64,24 @@ class Session(Base):
         DateTime, default=datetime.datetime.utcnow
     )
     expires_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False)
+    totp_verified_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
 
     user: Mapped["User | None"] = relationship(back_populates="sessions")
+
+
+class UserTOTP(Base):
+    __tablename__ = "user_totp"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    # Bumped on admin reset; combined with user_id and master key to derive the secret.
+    key_num: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Null = enrollment started (QR shown) but user has not yet entered a valid code.
+    confirmed_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
+    # Highest accepted TOTP counter (floor(unix_time / 30)). Rejects replay.
+    last_counter: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime, default=datetime.datetime.utcnow
+    )
 
 
 class IPBlocklist(Base):

@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Set up two-factor authentication{% endblock %}
+{% block body %}
+<div class="container">
+    <h1>Set up two-factor authentication</h1>
+    <h2>{{ user_email }}</h2>
+
+    {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+    <p style="margin-bottom: 0.75rem; font-size: 0.95rem;">
+        Open your authenticator app (Google Authenticator, 1Password, Authy, etc.)
+        and scan the QR code below, or enter the secret manually.
+    </p>
+
+    <div class="qr">{{ qr_svg | safe }}</div>
+
+    <div class="secret-block">
+        <label>Secret (manual entry)</label>
+        <code>{{ secret }}</code>
+    </div>
+
+    <p class="meta">Issuer: <code>{{ issuer }}</code></p>
+
+    <form method="POST" action="/_auth/totp/enroll/confirm">
+        <input type="hidden" name="next" value="{{ next }}">
+        <div class="form-group">
+            <label for="code">Enter the 6-digit code your app shows</label>
+            <input type="text" id="code" name="code" inputmode="numeric"
+                   pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code"
+                   autofocus required>
+        </div>
+        <button type="submit" class="btn btn-primary">Confirm and finish setup</button>
+    </form>
+</div>
+{% endblock %}
+
+{% block extra_head %}
+<style>
+    .container { max-width: 480px; }
+    .qr { display: flex; justify-content: center; margin: 1rem 0; }
+    .qr svg { width: 220px; height: 220px; }
+    .secret-block { background: #f8f8f8; border-radius: 4px; padding: 0.6rem; margin-bottom: 0.75rem; text-align: center; }
+    .secret-block code { font-size: 1rem; letter-spacing: 1px; word-break: break-all; }
+    .meta { font-size: 0.8rem; color: #777; margin-bottom: 1rem; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+</style>
+{% endblock %}

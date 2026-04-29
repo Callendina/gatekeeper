@@ -43,6 +43,7 @@
                     <th>Email</th>
                     <th>Display Name</th>
                     <th>Created</th>
+                    <th>MFA</th>
                     <th>App Roles</th>
                 </tr>
             </thead>
@@ -59,6 +60,21 @@
                     </td>
                     <td>{{ user.display_name }}</td>
                     <td class="local-date" data-utc="{{ user.created_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}">{{ user.created_at.strftime('%Y-%m-%d') }}</td>
+                    <td>
+                        {% set t = user_totp.get(user.id) %}
+                        {% if t and t.confirmed_at %}
+                            <span style="color:#27ae60;font-size:0.85rem;">enrolled</span><br>
+                            <span class="local-date" data-utc="{{ t.confirmed_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}" style="color:#666;font-size:0.75rem;">{{ t.confirmed_at.strftime('%Y-%m-%d') }}</span><br>
+                            <form method="POST" action="/_auth/admin/users/{{ user.id }}/totp/reset" style="display:inline;margin-top:0.2rem;"
+                                  onsubmit="return confirm('Reset MFA for {{ user.email }}? They will need to enroll again on next protected access. Active step-up sessions will also be cleared.');">
+                                <button type="submit" style="background:#e67e22;font-size:0.75rem;padding:0.15rem 0.4rem;">Reset MFA</button>
+                            </form>
+                        {% elif t %}
+                            <span style="color:#e67e22;font-size:0.85rem;">started</span>
+                        {% else %}
+                            <span style="color:#999;font-size:0.85rem;">none</span>
+                        {% endif %}
+                    </td>
                     <td>
                         {# Build per-app lookup so the role-set form can pre-fill the existing role + group. #}
                         {% set existing = {} %}

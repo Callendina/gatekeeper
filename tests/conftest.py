@@ -7,11 +7,13 @@ from fastapi import FastAPI
 
 from gatekeeper.config import (
     GatekeeperConfig, AppConfig, PaywallConfig, APIAccessConfig, RateLimitConfig,
+    MFAConfig,
 )
 from gatekeeper.database import init_db
 from gatekeeper.auth.forward_auth import router as forward_auth_router, init_forward_auth
 from gatekeeper.auth.login import router as login_router, init_login_routes
 from gatekeeper.auth.api_keys import router as api_key_router, init_api_key_routes
+from gatekeeper.auth.totp import router as totp_router, init_totp_routes
 from gatekeeper.admin.routes import router as admin_router, init_admin_routes
 from gatekeeper.middleware.rate_limit import _request_log, _api_key_log
 from gatekeeper.middleware.ip_block import _blocked_ips
@@ -66,6 +68,20 @@ def get_test_config() -> GatekeeperConfig:
                 roles=["user", "admin"],
                 default_role="user",
             ),
+            "mfaapp": AppConfig(
+                slug="mfaapp",
+                name="MFA App",
+                domains=["mfa.example.com"],
+                protected_paths=["/protected/*"],
+                rate_limit=RateLimitConfig(requests_per_minute=100),
+                roles=["user", "admin"],
+                default_role="user",
+                mfa=MFAConfig(
+                    required_for_roles=["admin"],
+                    required_for_paths=["/sensitive/*"],
+                    step_up_minutes=30,
+                ),
+            ),
         },
     )
 
@@ -90,6 +106,7 @@ async def app(config):
     init_forward_auth(config)
     init_login_routes(config)
     init_api_key_routes(config)
+    init_totp_routes(config)
     init_admin_routes(config)
 
     # Build a test app directly (avoids importing gatekeeper.app which
@@ -100,6 +117,7 @@ async def app(config):
     test_app.include_router(forward_auth_router)
     test_app.include_router(login_router)
     test_app.include_router(api_key_router)
+    test_app.include_router(totp_router)
     test_app.include_router(admin_router)
 
     @test_app.get("/_auth/health")

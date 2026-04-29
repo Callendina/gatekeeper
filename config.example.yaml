@@ -11,6 +11,9 @@ server:
   secret_key: "CHANGE_ME"
   # Optional: shown as banner in admin UI (e.g. "STAGING")
   # environment: "STAGING"
+  # TOTP/MFA settings (per-app gating goes under each app's `mfa:` block)
+  # totp_issuer: "Callendina Gatekeeper"   # shown in users' authenticator apps
+  # system_admin_requires_totp: true        # require TOTP for /_auth/admin and /_term/
 
 database:
   # SQLite database path (relative to working directory)
@@ -60,6 +63,14 @@ apps:
     #   rate_limit_per_ip_per_10min: 5
     #   pending_html_file: ""   # custom waiting room page
     #   sent_html_file: ""      # custom "check your inbox" page
+    # TOTP / MFA gating. Triggered by role match OR path match. Eager
+    # enrollment for role-triggered users, lazy for path-triggered.
+    # mfa:
+    #   required_for_roles: ["admin"]       # any role match → require TOTP
+    #   required_for_paths: ["/admin/*"]    # glob; matched paths require TOTP
+    #   step_up_days: 90                    # how long a TOTP verification stays valid
+    #   # step_up_minutes: 30               # alternative; takes precedence over days
+    #   # step_up_minutes/days: 0 (default) = once per session (until cookie expires)
     roles:
       - "user"
       - "admin"

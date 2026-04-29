@@ -16,7 +16,7 @@ async def init_db(database_path: str):
     async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
     async with engine.begin() as conn:
-        from gatekeeper.models import User, OAuthAccount, Session, IPBlocklist, AnonymousUsage, AccessLog, APIKey, InviteCode, InviteUse, InviteWaitlist, InviteUserLimit  # noqa: F401
+        from gatekeeper.models import User, OAuthAccount, Session, IPBlocklist, AnonymousUsage, AccessLog, APIKey, InviteCode, InviteUse, InviteWaitlist, InviteUserLimit, UserTOTP  # noqa: F401
         await conn.run_sync(Base.metadata.create_all)
 
         # Migrate: add columns that may be missing from older databases
@@ -27,6 +27,7 @@ async def init_db(database_path: str):
         await _add_column_if_missing(conn, "invite_codes", "role", "VARCHAR(50)")
         await _add_column_if_missing(conn, "invite_codes", '"group"', "VARCHAR(100)")
         await _add_column_if_missing(conn, "user_app_roles", '"group"', "VARCHAR(100)")
+        await _add_column_if_missing(conn, "sessions", "totp_verified_at", "DATETIME")
 
 
 async def _add_column_if_missing(conn, table: str, column: str, col_type: str):

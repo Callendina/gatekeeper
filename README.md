@@ -4,7 +4,8 @@ Centralized authentication, authorization, rate limiting, and soft paywall servi
 
 ## Features
 
-- **Unified authentication** — OAuth-only (Google and GitHub), shared across all apps
+- **Unified authentication** — OAuth (Google, GitHub) and magic link (passwordless email), shared across all apps
+- **TOTP / MFA** — optional second factor, gated by role or path, with periodic step-up
 - **Per-app roles** — `user`, `admin`, `guest` (configurable per app)
 - **Two-tier soft paywall** — nag screen (dismissable) then hard block after configurable session limits
 - **Custom login and nag pages** — per-app HTML templates with your own branding
@@ -29,11 +30,14 @@ Internet -> Caddy (HTTPS) -> forward_auth -> Gatekeeper (localhost:9100)
 Every request passes through gatekeeper before reaching your app. Gatekeeper checks (in order):
 
 1. IP blocklist
-2. Session cookie (validated early for rate limit)
-3. Rate limit (authenticated users can get a higher limit)
-4. API key (for apps with `api_access.mode: "key_required"`)
-5. Protected path (requires auth — accepts session cookie **or** registered API key)
-6. Soft paywall (nag screen or hard block)
+2. Invite gate (for invite-only apps)
+3. Session cookie (validated early for rate limit)
+4. Pending-invite redirect (for users awaiting admin approval)
+5. TOTP gate (if `mfa.required_for_roles` or `mfa.required_for_paths` matches)
+6. Rate limit (authenticated users can get a higher limit)
+7. API key (for apps with `api_access.mode: "key_required"`)
+8. Protected path (requires auth — accepts session cookie **or** registered API key)
+9. Soft paywall (nag screen or hard block)
 
 If allowed, gatekeeper sets headers that Caddy copies to your app:
 
@@ -97,10 +101,18 @@ See [config.example.yaml](config.example.yaml) for the main config. Apps can als
 
 Key sections:
 
-- **`apps`** — each app has a slug, domain list, protected paths, paywall, allowed emails, custom pages
+- **`apps`** — each app has a slug, domain list, protected paths, paywall, allowed emails, custom pages, optional `mfa:` block
 - **`oauth.google`** / **`oauth.github`** — OAuth provider credentials
+- **`email`** — Resend API config for magic link login
 - **`rate_limit`** — per-IP limits (separate for anonymous vs authenticated)
 - **`server.environment`** — optional label shown in admin UI (e.g. "STAGING")
+- **`server.totp_issuer`** / **`server.system_admin_requires_totp`** — TOTP / MFA settings
+
+## TOTP / MFA
+
+Apps can require a TOTP second factor for users in specified roles or for requests to specified paths. Secrets are derived per-user from the server secret (no per-user secret stored in the DB), so a leaked database alone reveals nothing. Step-up cadence (`step_up_minutes` / `step_up_days`) controls how often verification is re-prompted; `0` means once per session. Admins can reset a user's MFA from the admin users page, which forces re-enrollment.
+
+See the TOTP section in `CLAUDE.md` and the `mfa:` example in `config.example.yaml` for the full configuration reference.
 
 ## Deployment
 

@@ -6,7 +6,8 @@ This document is for Claude Code sessions (or developers) working on apps that n
 
 Gatekeeper handles all authentication centrally. Your app does NOT need to:
 - Manage user accounts or passwords
-- Handle OAuth flows (Google, GitHub)
+- Handle OAuth flows (Google, GitHub) or magic link login
+- Enforce TOTP / MFA — gatekeeper redirects to enrollment / step-up before requests reach your app
 - Implement login pages
 - Check session cookies
 - Rate limit or block IPs
@@ -322,6 +323,8 @@ These are served by gatekeeper through Caddy. You can link to them from your app
 | `/_auth/oauth/github?app=SLUG&next=/path` | Direct GitHub OAuth login |
 | `/_auth/nag?app=SLUG&next=/path` | Paywall nag page (auto-redirected to by gatekeeper) |
 | `/_auth/nag/dismiss?next=/path` | Dismiss nag for 1 hour and continue |
+| `/_auth/totp/enroll?next=/path` | TOTP enrollment (QR + secret) |
+| `/_auth/totp/verify?next=/path` | TOTP step-up prompt |
 | `/_auth/health` | Health check (`{"status": "ok"}`) |
 | `/_auth/version` | Version check (`{"version": 1}`) |
 | `/_auth/status/SLUG` | Active key counts by tier (no auth required, no sensitive data) |

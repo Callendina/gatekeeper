@@ -270,8 +270,8 @@ async def issue_temp_key(
 
 async def validate_api_key(
     db: AsyncSession, key: str, app_slug: str
-) -> tuple[APIKey | None, User | None, str | None]:
-    """Validate an API key. Returns (api_key, user, role) or (None, None, None)."""
+) -> tuple[APIKey | None, User | None, str | None, str | None]:
+    """Validate an API key. Returns (api_key, user, role, group) or (None, None, None, None)."""
     stmt = select(APIKey).where(
         APIKey.key == key,
         APIKey.app_slug == app_slug,
@@ -281,18 +281,18 @@ async def validate_api_key(
     api_key = result.scalar_one_or_none()
 
     if api_key is None:
-        return None, None, None
+        return None, None, None, None
 
     if api_key.user_id is None:
         # Temp key — no user attached
-        return api_key, None, None
+        return api_key, None, None, None
 
     # Look up the user and their role
     user_stmt = select(User).where(User.id == api_key.user_id)
     user_result = await db.execute(user_stmt)
     user = user_result.scalar_one_or_none()
     if user is None:
-        return None, None, None
+        return None, None, None, None
 
     role_stmt = select(UserAppRole).where(
         UserAppRole.user_id == user.id,

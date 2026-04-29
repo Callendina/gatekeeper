@@ -30,7 +30,9 @@ from gatekeeper.auth.invites import (
 from gatekeeper.models import AccessLog, Session, User
 
 import fnmatch
-from urllib.parse import urlparse, parse_qs, urlencode
+from urllib.parse import urlparse, parse_qs, urlencode, quote
+
+from gatekeeper.auth.totp import get_totp
 
 router = APIRouter()
 _config: GatekeeperConfig = None
@@ -43,6 +45,50 @@ def init_forward_auth(config: GatekeeperConfig):
 
 def _path_matches_any(path: str, patterns: list[str]) -> bool:
     return any(fnmatch.fnmatch(path, pattern) for pattern in patterns)
+
+
+async def _check_totp_gate(
+    db, session, user, role, mfa, path: str
+):
+    """If MFA is required for this user/path, return a redirect Response;
+    otherwise None. Caller has already filtered to authenticated users.
+
+    Decision logic:
+    - role-triggered: user's role for this app is in mfa.required_for_roles
+    - path-triggered: requested path matches one of mfa.required_for_paths
+    Either trigger requires:
+      - an enrolled (confirmed) UserTOTP — else redirect to /enroll
+      - a fresh enough session.totp_verified_at — else redirect to /verify
+    "fresh enough" = totp_verified_at is set AND (step_up_seconds == 0
+    OR verified within the last step_up_seconds).
+    """
+    if not mfa.enabled:
+        return None
+    role_triggered = bool(role) and role in mfa.required_for_roles
+    path_triggered = bool(mfa.required_for_paths) and _path_matches_any(path, mfa.required_for_paths)
+    if not (role_triggered or path_triggered):
+        return None
+
+    rec = await get_totp(db, user.id)
+    next_q = quote(path or "/")
+    if rec is None or rec.confirmed_at is None:
+        return Response(
+            status_code=302,
+            headers={"Location": f"/_auth/totp/enroll?next={next_q}"},
+        )
+
+    needs_step_up = session.totp_verified_at is None
+    if not needs_step_up and mfa.step_up_seconds > 0:
+        age = (datetime.datetime.utcnow() - session.totp_verified_at).total_seconds()
+        if age > mfa.step_up_seconds:
+            needs_step_up = True
+
+    if needs_step_up:
+        return Response(
+            status_code=302,
+            headers={"Location": f"/_auth/totp/verify?next={next_q}"},
+        )
+    return None
 
 
 def _get_client_ip(request: Request) -> str:
@@ -185,6 +231,14 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
                 status_code=302,
                 headers={"Location": f"/_auth/pending?app={app.slug}"},
             )
+
+    # 3b. TOTP / MFA gate (only for authenticated users; anon and API-key
+    # requests are handled by other gates).
+    if user is not None:
+        totp_response = await _check_totp_gate(db, session, user, role, app.mfa, path)
+        if totp_response is not None:
+            await _log(db, ip, app.slug, path, method, user.email, "totp_required", **_extra)
+            return totp_response
 
     # 4. Check rate limit (per-app, authenticated users may get a higher limit)
     rl_ok, rl_count, rl_limit = check_rate_limit(ip, app.rate_limit, authenticated=user is not None)
@@ -418,11 +472,13 @@ async def verify_system_admin(request: Request, db: AsyncSession = Depends(get_d
 
     # Find the user behind this session, regardless of which app's session it is.
     user = None
+    session = None
     if session_token:
         for app_slug in _config.apps:
-            _sess, candidate, _role, _grp = await validate_session(db, session_token, app_slug)
+            sess, candidate, _role, _grp = await validate_session(db, session_token, app_slug)
             if candidate:
                 user = candidate
+                session = sess
                 break
         if user is None:
             # Session may not be scoped to a configured app
@@ -446,6 +502,24 @@ async def verify_system_admin(request: Request, db: AsyncSession = Depends(get_d
     if not user.is_system_admin:
         await _log(db, ip, "_system", path, method, user.email, "blocked", **_extra)
         return Response(status_code=403, content="System admin access required")
+
+    # System-admin TOTP gate. We piggy-back on the same /_auth/totp/{enroll,verify}
+    # routes used by app-scoped MFA — they look up the session/user themselves.
+    if _config.system_admin_requires_totp:
+        rec = await get_totp(db, user.id)
+        next_q = quote(path or "/")
+        if rec is None or rec.confirmed_at is None:
+            await _log(db, ip, "_system", path, method, user.email, "totp_required", **_extra)
+            return Response(
+                status_code=302,
+                headers={"Location": f"/_auth/totp/enroll?next={next_q}"},
+            )
+        if session is None or session.totp_verified_at is None:
+            await _log(db, ip, "_system", path, method, user.email, "totp_required", **_extra)
+            return Response(
+                status_code=302,
+                headers={"Location": f"/_auth/totp/verify?next={next_q}"},
+            )
 
     response = Response(status_code=200)
     response.headers["X-Gatekeeper-User"] = user.email

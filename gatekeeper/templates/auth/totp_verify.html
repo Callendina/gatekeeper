@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Two-factor authentication{% endblock %}
+{% block body %}
+<div class="container">
+    <h1>Two-factor authentication</h1>
+    <h2>{{ user_email }}</h2>
+
+    {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+    <p style="margin-bottom: 1rem; font-size: 0.95rem;">
+        Enter the 6-digit code from your authenticator app to continue.
+    </p>
+
+    <form method="POST" action="/_auth/totp/verify">
+        <input type="hidden" name="next" value="{{ next }}">
+        <div class="form-group">
+            <input type="text" id="code" name="code" inputmode="numeric"
+                   pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code"
+                   autofocus required>
+        </div>
+        <button type="submit" class="btn btn-primary">Verify</button>
+    </form>
+</div>
+{% endblock %}

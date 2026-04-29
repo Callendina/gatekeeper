@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from gatekeeper.database import get_db
 from gatekeeper.config import GatekeeperConfig
-from gatekeeper.models import User, UserAppRole, OAuthAccount, IPBlocklist, AccessLog, Session, APIKey, InviteCode, InviteUse, InviteWaitlist, InviteUserLimit
+from gatekeeper.models import User, UserAppRole, OAuthAccount, IPBlocklist, AccessLog, Session, APIKey, InviteCode, InviteUse, InviteWaitlist, InviteUserLimit, UserTOTP
 from gatekeeper.middleware.ip_block import block_ip, unblock_ip
 from gatekeeper.auth.sessions import validate_session
 
@@ -147,10 +147,15 @@ async def list_users(request: Request, db: AsyncSession = Depends(get_db)):
         role_result = await db.execute(role_stmt)
         user_roles[user.id] = role_result.scalars().all()
 
+    # MFA enrollment status per user (None / unconfirmed / datetime)
+    totp_rows = (await db.execute(select(UserTOTP))).scalars().all()
+    user_totp = {t.user_id: t for t in totp_rows}
+
     return templates.TemplateResponse("admin/users.html", {
         "request": request,
         "users": users,
         "user_roles": user_roles,
+        "user_totp": user_totp,
         "apps": _config.apps,
         "admin_email": admin,
         "environment": _config.environment,
@@ -158,6 +163,32 @@ async def list_users(request: Request, db: AsyncSession = Depends(get_db)):
         "pending_waitlist": await _pending_waitlist_count(db),
         "pending_invite": await _pending_invite_count(db),
     })
+
+
+@router.post("/users/{user_id}/totp/reset")
+async def admin_reset_totp(
+    user_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Bumps the user's key_num and clears confirmed_at, forcing re-enrollment
+    with a fresh TOTP secret on next protected access."""
+    admin, redirect = _check_admin(await _require_admin(request, db))
+    if redirect:
+        return redirect
+
+    from gatekeeper.auth.totp import reset_totp
+    await reset_totp(db, user_id)
+    # Also revoke any existing totp_verified_at so the user can't keep
+    # bypassing the gate on already-stepped-up sessions.
+    sessions = (await db.execute(
+        select(Session).where(Session.user_id == user_id, Session.totp_verified_at.isnot(None))
+    )).scalars().all()
+    for s in sessions:
+        s.totp_verified_at = None
+    await db.commit()
+
+    return RedirectResponse(url="/_auth/admin/users", status_code=302)
 
 
 @router.post("/users/{user_id}/role")

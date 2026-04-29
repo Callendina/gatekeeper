@@ -252,6 +252,97 @@ Email is the shared identity key. If a user signs in with Google first and later
 - **New users with invite cookie**: magic link sent, account created normally
 - **New users without invite**: silently ignored (no email sent)
 
+## TOTP (two-factor authentication)
+
+Gatekeeper has native TOTP (RFC 6238) support, configurable per-app and
+applied regardless of how the user originally authenticated (OAuth or
+magic link). The TOTP gate sits between the pending-invite check and the
+rate limiter in forward_auth, so any authenticated request that matches
+a configured trigger must clear it.
+
+### Triggers
+
+- **Role-based**: any user whose role for the app is in `mfa.required_for_roles`.
+  Forces *eager* enrollment — the moment such a user signs in, the next
+  request to the app redirects to `/_auth/totp/enroll`.
+- **Path-based**: any path matching a pattern in `mfa.required_for_paths`.
+  Forces *lazy* enrollment — the user is only redirected to enroll the
+  first time they hit such a path.
+
+System-admin gates (`/_auth/admin/*` and `/_term/`) are governed by a
+separate server-level `system_admin_requires_totp` flag.
+
+### Step-up cadence
+
+`mfa.step_up_minutes` (or `mfa.step_up_days` for readability) controls
+how long a TOTP verification stays valid within a session.
+
+- `0` (default) = **once per session**: verify on first gated request,
+  then no re-prompt until the session cookie expires (6 months) or the
+  user signs out.
+- `> 0` = **periodic step-up**: re-prompt N minutes/days after the last
+  successful verification, even within the same session.
+
+`step_up_minutes` takes precedence over `step_up_days` if both are set > 0.
+
+A common pattern: `step_up_days: 90` for sensitive admin tools — once a
+quarter, re-prove TOTP, but stay signed in continuously between prompts.
+
+### Per-user secret derivation
+
+There is no per-user secret stored in the database. Each user's TOTP
+secret is derived deterministically from `(server.secret_key, user_id, key_num)`
+via HMAC-SHA256 (with a `"totp-v1|"` domain-separation tag). This means:
+
+- Backups of `gatekeeper.db` alone reveal nothing about TOTP secrets.
+- Admin reset bumps `key_num` in `user_totp`, which invalidates the
+  previous secret and forces re-enrollment with a fresh derivation.
+- The DB stores only: `key_num`, `confirmed_at`, `last_counter` (anti-replay).
+- Per-user storage = ~24 bytes; no encryption library dependency.
+
+### Issuer name
+
+The string shown in users' authenticator apps comes from
+`server.totp_issuer` (default `"Gatekeeper"`). If `server.environment`
+is set, it is appended — e.g. `"Callendina Gatekeeper - STAGING"`.
+
+### Routes
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /_auth/totp/enroll` | Render QR + secret string (creates UserTOTP if missing) |
+| `POST /_auth/totp/enroll/confirm` | Verify first code, set `confirmed_at` |
+| `GET /_auth/totp/verify` | Step-up prompt |
+| `POST /_auth/totp/verify` | Update `session.totp_verified_at` on success |
+
+All four are reachable from any app's domain. They look up the user by
+the global `gk_session` cookie, not by app slug. After a successful POST,
+the user is redirected to a same-host relative `next` path (absolute URLs
+are stripped to `/` to prevent open redirects).
+
+### Rate limiting
+
+Failed TOTP attempts are tracked per IP in memory; after 10 failures in
+10 minutes the IP is added to the blocklist (same `block_ip` mechanism
+as bad invite codes).
+
+### Admin reset
+
+The admin users page (`/_auth/admin/users`) shows enrollment status per
+user and exposes a **Reset MFA** button. Reset:
+1. Bumps `user_totp.key_num` and clears `confirmed_at` and `last_counter`
+2. Clears `session.totp_verified_at` on every active session for that user
+
+The user must re-enroll on next protected access — the old authenticator
+entry stops working immediately.
+
+### Interaction with `/_term/`
+
+The web terminal stays gated by sshd/PAM (linux password + optional
+`pam_google_authenticator`) regardless. Setting
+`system_admin_requires_totp: true` adds gatekeeper TOTP as an additional
+layer in front of the ttyd handoff; both must clear.
+
 ## Pending invite system
 
 When an invite-only app receives a new user who signed up via OAuth or magic link **without a valid invite code**, the user gets a real account but with `pending_invite=True` on their UserAppRole. They are redirected to a waiting room page (`/_auth/pending`) where they can:
