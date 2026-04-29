@@ -13,7 +13,7 @@ Group=ttyd
 # We launch ssh as the entrypoint so the user has to authenticate to sshd
 # (linux password + optional TOTP) before getting a shell. ttyd itself runs
 # as the unprivileged 'ttyd' user and has no shell access of its own.
-ExecStart=/usr/local/bin/ttyd \
+ExecStart=/usr/bin/ttyd \
     --interface 127.0.0.1 \
     --port 7681 \
     --base-path /_term \
