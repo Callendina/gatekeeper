@@ -372,16 +372,20 @@ Layered auth for the web terminal:
 2. **sshd** — linux password for `jonnosan` on the localhost handoff.
 
 PAM TOTP (`pam_google_authenticator.so`) is intentionally skipped for
-`jonnosan@127.0.0.1` so the user isn't TOTP-prompted twice on the
+the localhost handoff so the user isn't TOTP-prompted twice on the
 terminal path — gatekeeper has already covered that. PAM TOTP still
 fires for any *external* keyboard-interactive SSH session (defense in
 depth for the rare case where someone bypasses pubkey auth). The skip
 is implemented in `/etc/pam.d/sshd` via:
 
 ```
-auth [success=1 default=ignore] pam_succeed_if.so quiet user = jonnosan rhost = 127.0.0.1
+auth [success=2 default=ignore] pam_succeed_if.so quiet user = jonnosan rhost = 127.0.0.1
+auth [success=1 default=ignore] pam_succeed_if.so quiet user = jonnosan rhost = ::1
 auth required pam_google_authenticator.so nullok
 ```
+
+Both IPv4 and IPv6 forms are needed because `ssh jonnosan@localhost`
+inside ttyd resolves to `::1` first on dual-stack hosts.
 
 ## Pending invite system
 

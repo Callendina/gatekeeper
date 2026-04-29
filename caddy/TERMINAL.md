@@ -99,10 +99,12 @@ sudo apt-get install -y libpam-google-authenticator
 # Run as jonnosan to set up the secret + scan the QR code into your phone
 google-authenticator -t -d -f -r 3 -R 30 -W
 
-# Edit /etc/pam.d/sshd. Insert these two lines after @include common-auth.
-# The pam_succeed_if line skips TOTP for the ttyd handoff (localhost); the
-# pam_google_authenticator line enforces it for all other ssh sessions.
-#   auth [success=1 default=ignore] pam_succeed_if.so quiet user = jonnosan rhost = 127.0.0.1
+# Edit /etc/pam.d/sshd. Insert these three lines after @include common-auth.
+# The two pam_succeed_if lines skip TOTP for the ttyd handoff (jonnosan@
+# localhost, either IPv4 or IPv6); the pam_google_authenticator line
+# enforces TOTP for all other ssh sessions.
+#   auth [success=2 default=ignore] pam_succeed_if.so quiet user = jonnosan rhost = 127.0.0.1
+#   auth [success=1 default=ignore] pam_succeed_if.so quiet user = jonnosan rhost = ::1
 #   auth required pam_google_authenticator.so nullok
 # (nullok lets users without TOTP still log in; remove once you've enrolled.)
 
