@@ -151,6 +151,27 @@ Useful tmux bindings (default prefix `Ctrl-b`):
 - `Ctrl-b [` — enter copy mode (scrollback); `q` to exit
 - `Ctrl-b d` — detach (the tmux server keeps the session running)
 
+### Scrollback and mouse
+
+tmux owns the screen via the alternate-screen buffer, so the browser's own
+scrollbar is empty once you attach — scrollback lives inside tmux. Two
+defaults are worth raising for the SSH target user (`jonnosan` on staging):
+
+`/home/jonnosan/.tmux.conf`:
+```tmux
+set -g history-limit 50000   # default 2000 — per-pane scrollback depth
+set -g mouse on              # wheel scrolls history; click-drag selects in copy-mode
+```
+
+Apply with `tmux source-file ~/.tmux.conf` from inside the session, or
+`tmux kill-session -t web` to start fresh. `mouse on` takes effect
+immediately; `history-limit` only applies to **new** panes/windows.
+
+Caveat: with `mouse on`, click-and-drag goes to tmux's copy-mode selection
+instead of the browser's native text selection. Hold **Shift** while
+click-dragging to bypass tmux and use xterm.js's native selection (useful
+for copying out of the terminal).
+
 Resetting the session (e.g. after a runaway process):
 ```bash
 ssh jonnosan@localhost tmux kill-session -t web
