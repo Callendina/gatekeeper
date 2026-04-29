@@ -365,10 +365,23 @@ fresh secret. No restart needed — the secret is derived on each request.
 
 ### Interaction with `/_term/`
 
-The web terminal stays gated by sshd/PAM (linux password + optional
-`pam_google_authenticator`) regardless. Setting
-`system_admin_requires_totp: true` adds gatekeeper TOTP as an additional
-layer in front of the ttyd handoff; both must clear.
+Layered auth for the web terminal:
+
+1. **Gatekeeper** at the edge — OAuth/magic-link, system-admin flag, and
+   (when `system_admin_requires_totp: true`) gatekeeper TOTP.
+2. **sshd** — linux password for `jonnosan` on the localhost handoff.
+
+PAM TOTP (`pam_google_authenticator.so`) is intentionally skipped for
+`jonnosan@127.0.0.1` so the user isn't TOTP-prompted twice on the
+terminal path — gatekeeper has already covered that. PAM TOTP still
+fires for any *external* keyboard-interactive SSH session (defense in
+depth for the rare case where someone bypasses pubkey auth). The skip
+is implemented in `/etc/pam.d/sshd` via:
+
+```
+auth [success=1 default=ignore] pam_succeed_if.so quiet user = jonnosan rhost = 127.0.0.1
+auth required pam_google_authenticator.so nullok
+```
 
 ## Pending invite system
 
