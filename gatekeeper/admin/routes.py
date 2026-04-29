@@ -1,5 +1,7 @@
 """Admin routes for managing users, IP blocklist, and viewing access logs."""
 import datetime
+from urllib.parse import quote
+
 from fastapi import APIRouter, Request, Depends, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -25,6 +27,23 @@ def init_admin_routes(config: GatekeeperConfig):
     _config = config
 
 
+async def _totp_redirect_if_required(
+    db: AsyncSession, user: User, session: Session | None, request: Request
+):
+    """When system_admin_requires_totp is set, redirect to enrol/verify if the
+    admin user hasn't completed TOTP for this session. Returns None if OK."""
+    if not _config.system_admin_requires_totp:
+        return None
+    from gatekeeper.auth.totp import get_totp
+    rec = await get_totp(db, user.id)
+    next_q = quote(request.url.path or "/_auth/admin")
+    if rec is None or rec.confirmed_at is None:
+        return RedirectResponse(url=f"/_auth/totp/enroll?next={next_q}", status_code=302)
+    if session is None or session.totp_verified_at is None:
+        return RedirectResponse(url=f"/_auth/totp/verify?next={next_q}", status_code=302)
+    return None
+
+
 async def _require_admin(request: Request, db: AsyncSession):
     """Check that the request is from a system admin by validating the session cookie.
     Returns the admin email, or an appropriate response (redirect to login or access denied)."""
@@ -37,7 +56,8 @@ async def _require_admin(request: Request, db: AsyncSession):
             session, user, role, _grp = await validate_session(db, session_token, app_slug)
             if user:
                 if user.is_system_admin:
-                    return user.email
+                    redir = await _totp_redirect_if_required(db, user, session, request)
+                    return redir if redir else user.email
                 authenticated_user = user.email
 
         # Also check sessions not scoped to any app (e.g. from the admin domain)
@@ -54,7 +74,8 @@ async def _require_admin(request: Request, db: AsyncSession):
                 user = user_result.scalar_one_or_none()
                 if user:
                     if user.is_system_admin:
-                        return user.email
+                        redir = await _totp_redirect_if_required(db, user, session, request)
+                        return redir if redir else user.email
                     authenticated_user = user.email
 
     if authenticated_user:
