@@ -1,0 +1,46 @@
+[Unit]
+Description=ttyd web terminal (gatekeeper-staging)
+After=network.target sshd.service
+
+[Service]
+# Dedicated unprivileged user. Create with:
+#   sudo useradd --system --shell /usr/sbin/nologin --home-dir /var/lib/ttyd --create-home ttyd
+User=ttyd
+Group=ttyd
+
+# ttyd binds to localhost only; Caddy is the only thing that talks to it.
+# -W = writable (allow input). Drop -W for a read-only viewer.
+# We launch ssh as the entrypoint so the user has to authenticate to sshd
+# (linux password + optional TOTP) before getting a shell. ttyd itself runs
+# as the unprivileged 'ttyd' user and has no shell access of its own.
+ExecStart=/usr/local/bin/ttyd \
+    --interface 127.0.0.1 \
+    --port 7681 \
+    --base-path /_term \
+    --writable \
+    --max-clients 4 \
+    --check-origin \
+    /usr/bin/ssh -tt \
+        -o StrictHostKeyChecking=accept-new \
+        -o UserKnownHostsFile=/var/lib/ttyd/known_hosts \
+        jonnosan@localhost
+
+Restart=on-failure
+RestartSec=5
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/ttyd
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+LockPersonality=true
+RestrictRealtime=true
+
+[Install]
+WantedBy=multi-user.target

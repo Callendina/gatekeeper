@@ -157,6 +157,9 @@ class GatekeeperConfig:
     port: int = 9100
     secret_key: str = ""
     environment: str = ""  # e.g. "STAGING" — shown as a banner in admin UI
+    # When True, /_auth/verify-system-admin is enabled and the admin UI
+    # surfaces a "Terminal" link to /_term/. Intended for staging only.
+    terminal_enabled: bool = False
     database_path: str = "gatekeeper.db"
     google_client_id: str = ""
     google_client_secret: str = ""
@@ -299,6 +302,7 @@ def load_config(path: str = "config.yaml") -> GatekeeperConfig:
         port=server.get("port", 9100),
         secret_key=server.get("secret_key", ""),
         environment=server.get("environment", ""),
+        terminal_enabled=server.get("terminal_enabled", False),
         database_path=db.get("path", "gatekeeper.db"),
         google_client_id=oauth_google.get("client_id", ""),
         google_client_secret=oauth_google.get("client_secret", ""),

@@ -176,6 +176,7 @@ server:
   port: 9100
   secret_key: "..."
   environment: "STAGING"              # optional: shown as banner in admin UI
+  terminal_enabled: false             # see "Web terminal" below — staging only
 
 # Required for magic link login
 email:
@@ -292,6 +293,23 @@ Set `magic_link.pending_html_file` to a custom HTML file with placeholders:
 | `GET /_auth/status/{app_slug}/keys` | `X-Admin-Key` header | Full list of active keys with emails, IPs, expiry |
 
 The `/keys` endpoint requires `admin_api_key` to be set in the app's config and the matching key in the `X-Admin-Key` request header.
+
+## Web terminal (`/_term/`)
+
+When `server.terminal_enabled: true`, Caddy can be configured to expose
+ttyd at `/_term/*` on the gatekeeper domain itself. Used on staging to get
+a browser-based shell without setting up a separate subdomain.
+
+- Caddy uses `forward_auth → /_auth/verify-system-admin` (not the per-app
+  `/_auth/verify`) since the gatekeeper domain isn't registered as an app.
+- Only users with `is_system_admin=true` get through; a 404 is returned
+  when `terminal_enabled` is false.
+- ttyd's process is just `ssh jonnosan@localhost`, so the linux password
+  (and ideally TOTP via `pam_google_authenticator`) is the second factor.
+- Admin nav surfaces a "Terminal" link only when `terminal_enabled` is true.
+
+See `caddy/TERMINAL.md` for the full server install (ttyd, systemd unit,
+PAM TOTP setup) and `caddy/example.Caddyfile` for the Caddy block.
 
 ## Creating the first admin user
 

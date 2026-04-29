@@ -27,7 +27,7 @@ from gatekeeper.auth.invites import (
     verify_invite_cookie, validate_invite_code_db, record_invite_use,
     make_invite_cookie, _invite_failures, INVITE_FAIL_LIMIT,
 )
-from gatekeeper.models import AccessLog
+from gatekeeper.models import AccessLog, Session, User
 
 import fnmatch
 from urllib.parse import urlparse, parse_qs, urlencode
@@ -385,6 +385,72 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
         response.headers["X-Gatekeeper-Group"] = ""
 
     await _log(db, ip, app.slug, path, method, user.email if user else None, "allowed", **_extra)
+    return response
+
+
+@router.get("/_auth/verify-system-admin")
+@router.head("/_auth/verify-system-admin")
+async def verify_system_admin(request: Request, db: AsyncSession = Depends(get_db)):
+    """Forward-auth endpoint that allows requests only from system admins.
+
+    Used to gate gatekeeper-internal admin tools (e.g. /_term/* on the
+    gatekeeper domain). Distinct from /_auth/verify because the gatekeeper
+    domain itself is not registered as an "app" in the per-app config.
+    """
+    ip = _get_client_ip(request)
+    host = request.headers.get("x-forwarded-host", "")
+    path = request.headers.get("x-forwarded-uri", "/")
+    method = request.headers.get("x-forwarded-method", "GET")
+    referrer = request.headers.get("x-forwarded-referer", "") or request.headers.get("referer", "") or None
+    user_agent = request.headers.get("x-forwarded-user-agent", "") or request.headers.get("user-agent", "") or None
+    session_token = request.cookies.get("gk_session")
+    _extra = dict(session_token=session_token, referrer=referrer, user_agent=user_agent)
+
+    # Must be explicitly enabled in config (defense-in-depth: don't expose
+    # this on environments where the protected feature isn't installed).
+    if not _config.terminal_enabled:
+        await _log(db, ip, "_system", path, method, None, "blocked", **_extra)
+        return Response(status_code=404, content="Not found")
+
+    if await is_ip_blocked(db, ip):
+        await _log(db, ip, "_system", path, method, None, "blocked", **_extra)
+        return Response(status_code=403, content="Blocked")
+
+    # Find the user behind this session, regardless of which app's session it is.
+    user = None
+    if session_token:
+        for app_slug in _config.apps:
+            _sess, candidate, _role, _grp = await validate_session(db, session_token, app_slug)
+            if candidate:
+                user = candidate
+                break
+        if user is None:
+            # Session may not be scoped to a configured app
+            session = await db.scalar(
+                select(Session).where(
+                    Session.token == session_token,
+                    Session.expires_at > datetime.datetime.utcnow(),
+                )
+            )
+            if session and session.user_id:
+                user = await db.scalar(select(User).where(User.id == session.user_id))
+
+    if user is None:
+        # Not signed in — bounce to login. Use any configured app slug for
+        # the post-login redirect; admins generally have a session for one.
+        app_slug = next(iter(_config.apps), "")
+        login_url = f"/_auth/login?app={app_slug}&next={path}"
+        await _log(db, ip, "_system", path, method, None, "auth_required", **_extra)
+        return Response(status_code=302, headers={"Location": login_url})
+
+    if not user.is_system_admin:
+        await _log(db, ip, "_system", path, method, user.email, "blocked", **_extra)
+        return Response(status_code=403, content="System admin access required")
+
+    response = Response(status_code=200)
+    response.headers["X-Gatekeeper-User"] = user.email
+    response.headers["X-Gatekeeper-System-Admin"] = "true"
+    await _log(db, ip, "_system", path, method, user.email, "allowed", **_extra)
     return response
 
 

@@ -126,6 +126,7 @@ async def admin_dashboard(request: Request, db: AsyncSession = Depends(get_db)):
         "pending_invite": pending_invite,
         "admin_email": admin,
         "environment": _config.environment,
+        "terminal_enabled": _config.terminal_enabled,
     })
 
 
@@ -153,6 +154,7 @@ async def list_users(request: Request, db: AsyncSession = Depends(get_db)):
         "apps": _config.apps,
         "admin_email": admin,
         "environment": _config.environment,
+        "terminal_enabled": _config.terminal_enabled,
         "pending_waitlist": await _pending_waitlist_count(db),
         "pending_invite": await _pending_invite_count(db),
     })
@@ -305,6 +307,7 @@ async def ip_blocklist_page(request: Request, db: AsyncSession = Depends(get_db)
         "blocked_ips": blocked,
         "admin_email": admin,
         "environment": _config.environment,
+        "terminal_enabled": _config.terminal_enabled,
         "pending_waitlist": await _pending_waitlist_count(db),
     })
 
@@ -375,6 +378,7 @@ async def access_log_page(
         "apps": _config.apps,
         "admin_email": admin,
         "environment": _config.environment,
+        "terminal_enabled": _config.terminal_enabled,
         "pending_waitlist": await _pending_waitlist_count(db),
     })
 
@@ -460,6 +464,7 @@ async def api_keys_page(
         "apps": _config.apps,
         "admin_email": admin,
         "environment": _config.environment,
+        "terminal_enabled": _config.terminal_enabled,
         "pending_waitlist": await _pending_waitlist_count(db),
     })
 
@@ -547,6 +552,7 @@ async def invites_page(
         "all_users": all_users,
         "admin_email": admin,
         "environment": _config.environment,
+        "terminal_enabled": _config.terminal_enabled,
         "pending_waitlist": await _pending_waitlist_count(db),
     })
 
@@ -824,5 +830,6 @@ async def analytics_page(
         "apps": _config.apps,
         "admin_email": admin,
         "environment": _config.environment,
+        "terminal_enabled": _config.terminal_enabled,
         "pending_waitlist": await _pending_waitlist_count(db),
     })

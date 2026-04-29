@@ -60,3 +60,35 @@ api.example.com {
 		reverse_proxy localhost:8003
 	}
 }
+
+# Gatekeeper's own domain (staging) — exposes a web terminal at /_term/*.
+#
+# Requires `server.terminal_enabled: true` in config.yaml and a running ttyd
+# on localhost:7681 (see caddy/ttyd.service for the systemd unit).
+#
+# /_term/* is gated by /_auth/verify-system-admin which only allows users
+# with is_system_admin=true. The terminal itself runs `ssh jonnosan@localhost`
+# so the linux password (and optionally TOTP via pam_google_authenticator)
+# is the second factor.
+gatekeeper-staging.example.com {
+	# Auth UI routes are served directly by gatekeeper.
+	handle /_auth/* {
+		reverse_proxy localhost:9100
+	}
+
+	# Web terminal — only system admins. ttyd is launched with
+	# `--base-path /_term`, so we proxy unmodified (no prefix strip).
+	handle /_term/* {
+		forward_auth localhost:9100 {
+			uri /_auth/verify-system-admin
+			copy_headers X-Gatekeeper-User X-Gatekeeper-System-Admin
+		}
+
+		reverse_proxy localhost:7681
+	}
+
+	# Everything else is the gatekeeper admin UI itself.
+	handle {
+		reverse_proxy localhost:9100
+	}
+}
