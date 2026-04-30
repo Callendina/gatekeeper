@@ -1,6 +1,6 @@
 """SMS-OTP routes.
 
-Two flows live here:
+Three flows live here:
 
   Phone enrolment (one-time, per user):
     GET  /_auth/phone/enroll              — number entry form
@@ -11,6 +11,9 @@ Two flows live here:
     GET  /_auth/sms-otp/verify            — issue + render OTP form
     POST /_auth/sms-otp/verify            — verify code, set session.totp_verified_at
     POST /_auth/sms-otp/resend            — invalidate in-flight, issue fresh
+
+  Provider delivery webhook:
+    POST /_auth/sms/webhook/{secret}      — ClickSend delivery receipt
 
 The forward_auth gate redirects users here based on `UserAppRole.mfa_method`.
 This module never decides whether the user *should* be doing SMS OTP — it
@@ -161,11 +164,16 @@ async def _send_sms(
         session_token=session.token, secret_key=_config.secret_key,
         ttl_seconds=ttl_seconds,
     )
+    await _record_event(
+        db, ip=ip, app_slug=app_slug, user_email=user.email,
+        status="sms_otp_issued", session_token=session.token, request=request,
+    )
+
     body = (
         f"Your {(_config.totp_issuer or 'Gatekeeper')} verification code is "
         f"{issued.plaintext_code}. Expires in {ttl_seconds // 60} minutes."
     )
-    provider = get_provider(_config.sms.provider)
+    provider = get_provider(_config.sms)
     send_result = await provider.send(
         to_e164=e164, body=body, idempotency_key=issued.challenge.id, db=db,
     )
@@ -176,6 +184,13 @@ async def _send_sms(
             status=f"sms_otp_send_failed:{send_result.error_category or 'unknown'}",
             session_token=session.token, request=request,
         )
+        # InsufficientCredit is the operator-actionable failure — surface
+        # it as a 5xx and let the future dashboard alert from the event.
+        if send_result.error_category == "insufficient_credit":
+            return HTMLResponse(
+                "Verification temporarily unavailable. Please try again shortly.",
+                status_code=503,
+            )
         return HTMLResponse(
             "We couldn't send the code right now. Please try again in a moment.",
             status_code=503,
@@ -186,9 +201,15 @@ async def _send_sms(
             db, issued.challenge.id, send_result.provider_message_id,
         )
 
+    # sms_otp_sent_to_provider conveys the post-provider acceptance state
+    # so the future dashboard can compute spend / latency / error-rate.
+    # Cost suffix is "cost=N" cents (-1 means provider didn't return one).
+    cost = send_result.cost_cents if send_result.cost_cents is not None else -1
+    provider_name = provider.name
     await _record_event(
         db, ip=ip, app_slug=app_slug, user_email=user.email,
-        status="sms_otp_issued", session_token=session.token, request=request,
+        status=f"sms_otp_sent_to_provider:{provider_name}:cost={cost}",
+        session_token=session.token, request=request,
     )
     return issued.challenge.id, issued.challenge.target_last4
 
@@ -694,3 +715,98 @@ async def _handle_verify_result(
 
     # Should be unreachable.
     return HTMLResponse("Internal error", status_code=500)
+
+
+# ---- delivery webhook -------------------------------------------------------
+
+# ClickSend status values that mean "no point retrying — show the user
+# a fresh-code prompt." We invalidate the challenge so the next user
+# action gets a new code rather than wasting attempts on a dead one.
+_TERMINAL_FAILURE_STATUSES = {
+    "UNDELIVERABLE", "FAILED", "REJECTED", "CANCELLED", "EXPIRED",
+}
+_DELIVERED_STATUSES = {"DELIVERED", "SENT"}
+
+
+@router.post("/_auth/sms/webhook/{secret}")
+async def sms_webhook(
+    secret: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """ClickSend delivery receipt sink. The path component `secret`
+    must match `sms.webhook_secret` — ClickSend doesn't sign these
+    natively, so we lock the endpoint behind a long random URL.
+
+    Idempotent: webhooks may be retried by ClickSend on transient
+    receipt failures, and an event for an already-finalised challenge
+    is a no-op.
+    """
+    if not _config.sms.webhook_secret:
+        # Misconfiguration — refuse rather than accept anonymous posts.
+        return HTMLResponse("Webhook not configured", status_code=503)
+    # Constant-time compare to keep the path secret out of timing oracles.
+    import hmac as _hmac
+    if not _hmac.compare_digest(secret, _config.sms.webhook_secret):
+        # Don't echo anything that helps an attacker probe.
+        return HTMLResponse("Not found", status_code=404)
+
+    payload = await _parse_webhook_body(request)
+    message_id = payload.get("message_id") or payload.get("messageId") or ""
+    status_str = (payload.get("status") or payload.get("status_text") or "").upper()
+    if not message_id:
+        return HTMLResponse("Missing message_id", status_code=400)
+
+    challenge = await db.scalar(
+        select(SmsOtpChallenge).where(
+            SmsOtpChallenge.provider_message_id == message_id,
+        )
+    )
+    if challenge is None:
+        # Unknown / pre-cleanup / spoofed — accept silently to avoid
+        # giving the sender a confirmed-or-not signal.
+        return HTMLResponse("OK", status_code=200)
+
+    if status_str in _DELIVERED_STATUSES and challenge.delivered_at is None:
+        await db.execute(
+            update(SmsOtpChallenge)
+            .where(SmsOtpChallenge.id == challenge.id)
+            .values(delivered_at=utcnow())
+        )
+        await db.commit()
+        await _record_event(
+            db, ip="webhook", app_slug=challenge.app_slug,
+            user_email=None, status="sms_otp_delivered",
+            session_token=challenge.gk_session_token, request=request,
+        )
+        return HTMLResponse("OK", status_code=200)
+
+    if status_str in _TERMINAL_FAILURE_STATUSES and challenge.status == "pending":
+        await db.execute(
+            update(SmsOtpChallenge)
+            .where(
+                SmsOtpChallenge.id == challenge.id,
+                SmsOtpChallenge.status == "pending",
+            )
+            .values(status="invalidated")
+        )
+        await db.commit()
+        await _record_event(
+            db, ip="webhook", app_slug=challenge.app_slug,
+            user_email=None, status=f"sms_otp_undeliverable:{status_str.lower()}",
+            session_token=challenge.gk_session_token, request=request,
+        )
+    return HTMLResponse("OK", status_code=200)
+
+
+async def _parse_webhook_body(request: Request) -> dict:
+    """Accept JSON or form-encoded — ClickSend's delivery receipt config
+    lets either be picked, and we don't want the choice to break parity."""
+    ctype = (request.headers.get("content-type") or "").lower()
+    if "application/json" in ctype:
+        try:
+            return await request.json()
+        except Exception:
+            return {}
+    form = await request.form()
+    return {k: v for k, v in form.items()}

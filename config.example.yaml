@@ -29,6 +29,25 @@ database:
 #   api_key: "re_..."                 # get from https://resend.com/api-keys
 #   from_address: "noreply@callendina.com"  # must be on a Resend-verified domain
 
+# Required for SMS OTP MFA. Defaults to the fake provider (writes codes
+# to a debug table + stdout) so dev/CI doesn't need real credentials.
+# sms:
+#   provider: "fake"                  # "fake" | "clicksend"
+#   test_mode: false                  # only for clicksend: ClickSend short-circuits delivery without billing
+#   country_allowlist: ["+61"]        # E.164 prefix list — never broaden to "all"
+#   sender_id: "Gatekeeper"           # ≤11 alphanumeric chars, ≥1 letter
+#   clicksend_username: ""
+#   clicksend_api_key: ""
+#   webhook_secret: ""                # long random — embedded in webhook URL path
+#   rate_limits:                      # five-tier sliding-window limits
+#     per_number_hour: 5
+#     per_number_day: 20
+#     per_user_hour: 10
+#     per_ip_hour: 10
+#     per_app_hour: 100
+#     global_hour: 200
+#     global_day: 1000
+
 oauth:
   google:
     client_id: ""

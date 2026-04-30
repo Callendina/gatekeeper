@@ -405,9 +405,74 @@ force existing TOTP users through the picker.
 ### Provider abstraction
 
 `SmsProvider` is the swap-friendly interface (see `sms/providers.py`).
-Phase 2 ships only `FakeSmsProvider`, which writes plaintext sends to
-the `debug_sms_outbox` table and stdout — used in dev and tests.
-ClickSend lands in phase 3 along with the delivery webhook.
+Two providers ship today:
+
+- `FakeSmsProvider` (`sms.provider: "fake"`): writes plaintext sends to
+  the `debug_sms_outbox` table and stdout. Default in dev / CI.
+- `ClickSendProvider` (`sms.provider: "clicksend"`): real provider.
+  Honours `sms.test_mode: true` to short-circuit at ClickSend's end
+  (no charge, no real delivery) for staging smoke tests.
+
+Startup logs a loud warning when `clicksend` is selected with
+`test_mode: false`, so a misconfigured non-prod env is hard to miss.
+
+#### ClickSend setup
+
+1. Create a ClickSend account, generate an API key, decide on a sender
+   ID (≤11 alphanumeric chars, ≥1 letter — ClickSend rules).
+2. Generate a long random webhook secret:
+   `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
+3. Add to `config.yaml`:
+   ```yaml
+   sms:
+     provider: "clicksend"
+     test_mode: true              # flip to false only when ready for live sends
+     country_allowlist: ["+61"]
+     sender_id: "Gatekeeper"
+     clicksend_username: "you@example.com"
+     clicksend_api_key: "the-api-key"
+     webhook_secret: "<random-token>"
+   ```
+4. In ClickSend's dashboard, set the SMS *delivery receipts* webhook URL to
+   `https://gatekeeper.example.com/_auth/sms/webhook/<webhook_secret>`
+   with content type JSON. Webhook is path-secret-locked because
+   ClickSend doesn't sign delivery receipts natively.
+
+### Delivery webhook
+
+`POST /_auth/sms/webhook/{secret}` accepts ClickSend delivery receipts
+(JSON or form-encoded). Idempotent — replays are no-ops.
+
+- `status: Delivered` → set `delivered_at` on the matching challenge.
+- `status: Undeliverable / Failed / Cancelled / Rejected / Expired` →
+  if the challenge is still pending, flip it to `invalidated` so the
+  next user action gets a fresh code instead of timing out.
+- Unknown `message_id` → silent 200 (no info-leak about which IDs we
+  know about).
+
+### Operator alerting
+
+Gatekeeper emits structured events into `access_log` rather than firing
+emails / pages itself; alert delivery is the future dashboard tool's
+job (see corkboard #1's "Out of scope" deliberations). Event types
+relevant to operators:
+
+| Status string | When |
+|---|---|
+| `sms_otp_issued` | Challenge row inserted (status=pending) |
+| `sms_otp_sent_to_provider:<provider>:cost=<cents>` | Provider accepted the send |
+| `sms_otp_send_failed:<error_category>` | Provider rejected — categories: `invalid_number`, `country_not_allowed`, `insufficient_credit`, `provider_rate_limit`, `transient_unknown` |
+| `sms_otp_delivered` | Webhook reported successful delivery |
+| `sms_otp_undeliverable:<provider_status>` | Webhook reported terminal failure |
+| `sms_otp_rate_limited:<tier>:<window>` | Local rate limiter tripped before provider call |
+| `sms_otp_enroll_rejected:<code>` | Validation rejected at enrol time (e.g. `country_not_allowed` ⇒ allowlist bypass attempt — should always be 0 in steady state) |
+
+Suggested alert thresholds for the dashboard tool (per design):
+- Hourly cost > $1 (sum `cost=` from `sms_otp_sent_to_provider:*` over 1h)
+- Daily cost > $5 (same, 24h)
+- Any `sms_otp_enroll_rejected:country_not_allowed` event
+- 3+ `sms_otp_issued` to the same number within 1h (enable `per_number_hour: 3` to surface as `sms_otp_rate_limited:per_number:hour`)
+- `sms_otp_send_failed:*` rate > 10% in any 10-min window
 
 ### Admin reset
 

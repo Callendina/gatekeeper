@@ -62,6 +62,8 @@ async def lifespan(app: FastAPI):
     init_totp_routes(config)
     init_sms_otp_routes(config)
     init_mfa_picker_routes(config)
+    from gatekeeper.sms.providers import warn_if_real_provider_active
+    warn_if_real_provider_active(config.sms)
     setup_oauth(config)
 
     cleanup_task = asyncio.create_task(periodic_cleanup())

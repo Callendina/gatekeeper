@@ -189,16 +189,24 @@ class SMSRateLimits:
 
 @dataclass
 class SMSConfig:
-    """Server-level SMS configuration. Phase-1 readers (no SMS code paths
-    live yet) only need the parser to accept these keys without warning."""
+    """Server-level SMS configuration."""
     provider: str = "fake"            # "fake" | "clicksend"
+    # When True, ClickSend send calls include `is_test=true` so the
+    # provider returns a synthetic SUCCESS without actually sending or
+    # billing. Used for CI / manual verification.
+    test_mode: bool = False
     # Country allowlist for destination numbers (E.164 prefix match).
     # Default ["+61"] — Australia only at MVP. Never broaden to "all".
     country_allowlist: list[str] = field(default_factory=lambda: ["+61"])
     sender_id: str = ""               # Alpha sender, ≤11 chars, ≥1 letter.
     clicksend_username: str = ""
     clicksend_api_key: str = ""
-    webhook_secret: str = ""          # HMAC secret for ClickSend webhook verify.
+    # Path secret embedded in the webhook URL: ClickSend doesn't sign
+    # delivery receipts itself, so we lock the endpoint behind a long
+    # random secret in the URL path
+    # (e.g. /_auth/sms/webhook/<webhook_secret>). Generate with:
+    #   python -c "import secrets; print(secrets.token_urlsafe(32))"
+    webhook_secret: str = ""
     rate_limits: SMSRateLimits = field(default_factory=SMSRateLimits)
 
     @property
@@ -420,6 +428,7 @@ def load_config(path: str = "config.yaml") -> GatekeeperConfig:
     sms_rl_raw = sms_raw.get("rate_limits", {}) or {}
     sms_config = SMSConfig(
         provider=sms_raw.get("provider", "fake"),
+        test_mode=sms_raw.get("test_mode", False),
         country_allowlist=sms_raw.get("country_allowlist", ["+61"]) or ["+61"],
         sender_id=sms_raw.get("sender_id", ""),
         clicksend_username=sms_raw.get("clicksend_username", ""),

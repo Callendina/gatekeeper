@@ -501,6 +501,275 @@ async def test_full_enrol_and_step_up_via_http(client, db):
     assert r7.headers.get("x-gatekeeper-user") == "endtoend@x.com"
 
 
+# ---- ClickSend provider ----------------------------------------------------
+
+def _make_clicksend_provider(handler):
+    """Build a ClickSendProvider with a MockTransport-backed httpx client."""
+    import httpx
+    from gatekeeper.sms.providers import ClickSendProvider
+    transport = httpx.MockTransport(handler)
+    client = httpx.AsyncClient(transport=transport)
+    return ClickSendProvider(
+        username="u", api_key="k", sender_id="Gatekeeper",
+        test_mode=False, client=client,
+    )
+
+
+@pytest.mark.asyncio
+async def test_clicksend_send_success_maps_cost_and_message_id(app, db):
+    import httpx
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        # Sanity: outgoing payload structure
+        body = request.read()
+        assert b'"to":"+61412345678"' in body
+        assert b'"custom_string":"cid-1"' in body
+        assert request.headers.get("authorization", "").startswith("Basic ")
+        return httpx.Response(200, json={
+            "data": {"messages": [{
+                "message_id": "ABC123",
+                "status": "SUCCESS",
+                "message_price": "0.0734",
+                "to": "+61412345678",
+            }]},
+        })
+
+    p = _make_clicksend_provider(handler)
+    result = await p.send(
+        to_e164="+61412345678", body="hi 123456",
+        idempotency_key="cid-1", db=db,
+    )
+    assert result.accepted is True
+    assert result.provider_message_id == "ABC123"
+    assert result.cost_cents == 7  # round(0.0734 * 100)
+    assert result.error_category is None
+
+
+@pytest.mark.asyncio
+async def test_clicksend_invalid_recipient_maps_to_invalid_number(app, db):
+    import httpx
+
+    def handler(request):
+        return httpx.Response(200, json={
+            "data": {"messages": [{
+                "status": "INVALID_RECIPIENT",
+                "message_price": "0",
+            }]},
+        })
+    p = _make_clicksend_provider(handler)
+    result = await p.send(to_e164="+61999", body="x", idempotency_key="c", db=db)
+    assert result.accepted is False
+    assert result.error_category == "invalid_number"
+
+
+@pytest.mark.asyncio
+async def test_clicksend_insufficient_credit(app, db):
+    import httpx
+
+    def handler(request):
+        return httpx.Response(200, json={
+            "data": {"messages": [{"status": "INSUFFICIENT_CREDIT"}]},
+        })
+    p = _make_clicksend_provider(handler)
+    result = await p.send(to_e164="+61412345678", body="x", idempotency_key="c", db=db)
+    assert result.accepted is False
+    assert result.error_category == "insufficient_credit"
+
+
+@pytest.mark.asyncio
+async def test_clicksend_http_429_maps_to_provider_rate_limit(app, db):
+    import httpx
+
+    def handler(request):
+        return httpx.Response(429, json={"messages": "Too many"})
+    p = _make_clicksend_provider(handler)
+    result = await p.send(to_e164="+61412345678", body="x", idempotency_key="c", db=db)
+    assert result.accepted is False
+    assert result.error_category == "provider_rate_limit"
+
+
+@pytest.mark.asyncio
+async def test_clicksend_unknown_status_falls_back_to_transient(app, db):
+    import httpx
+
+    def handler(request):
+        return httpx.Response(200, json={
+            "data": {"messages": [{"status": "WTF_NEW_STATUS_2030"}]},
+        })
+    p = _make_clicksend_provider(handler)
+    result = await p.send(to_e164="+61412345678", body="x", idempotency_key="c", db=db)
+    assert result.accepted is False
+    assert result.error_category == "transient_unknown"
+
+
+@pytest.mark.asyncio
+async def test_clicksend_test_mode_adds_is_test_flag(app, db):
+    import httpx
+    from gatekeeper.sms.providers import ClickSendProvider
+
+    captured = {}
+    def handler(request):
+        captured["body"] = request.read()
+        return httpx.Response(200, json={
+            "data": {"messages": [{"message_id": "X", "status": "SUCCESS"}]},
+        })
+
+    transport = httpx.MockTransport(handler)
+    client = httpx.AsyncClient(transport=transport)
+    p = ClickSendProvider(
+        username="u", api_key="k", sender_id="Gatekeeper",
+        test_mode=True, client=client,
+    )
+    await p.send(to_e164="+61412345678", body="x", idempotency_key="c", db=db)
+    assert b'"is_test":1' in captured["body"]
+
+
+def test_get_provider_returns_clicksend_when_configured():
+    from gatekeeper.config import SMSConfig
+    from gatekeeper.sms.providers import (
+        ClickSendProvider, get_provider, reset_singleton_for_tests,
+    )
+    reset_singleton_for_tests()
+    cfg = SMSConfig(
+        provider="clicksend",
+        clicksend_username="u", clicksend_api_key="k",
+        sender_id="Gatekeeper",
+    )
+    p = get_provider(cfg)
+    assert isinstance(p, ClickSendProvider)
+    reset_singleton_for_tests()
+
+
+def test_get_provider_rebuilds_on_config_change():
+    from gatekeeper.config import SMSConfig
+    from gatekeeper.sms.providers import (
+        FakeSmsProvider, ClickSendProvider, get_provider,
+        reset_singleton_for_tests,
+    )
+    reset_singleton_for_tests()
+    fake_cfg = SMSConfig(provider="fake")
+    cs_cfg = SMSConfig(
+        provider="clicksend",
+        clicksend_username="u", clicksend_api_key="k",
+    )
+    a = get_provider(fake_cfg)
+    b = get_provider(cs_cfg)
+    assert isinstance(a, FakeSmsProvider)
+    assert isinstance(b, ClickSendProvider)
+    assert a is not b
+    reset_singleton_for_tests()
+
+
+# ---- Webhook ---------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_webhook_rejects_bad_secret(client, config):
+    config.sms.webhook_secret = "right-secret"
+    resp = await client.post(
+        "/_auth/sms/webhook/wrong-secret",
+        json={"message_id": "abc", "status": "Delivered"},
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_webhook_503_when_unconfigured(client, config):
+    config.sms.webhook_secret = ""
+    resp = await client.post(
+        "/_auth/sms/webhook/anything",
+        json={"message_id": "abc", "status": "Delivered"},
+    )
+    assert resp.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_webhook_silent_ok_on_unknown_message_id(client, config):
+    config.sms.webhook_secret = "s"
+    resp = await client.post(
+        "/_auth/sms/webhook/s",
+        json={"message_id": "no-such-id", "status": "Delivered"},
+    )
+    assert resp.status_code == 200  # silent accept; no info-leak
+
+
+@pytest.mark.asyncio
+async def test_webhook_marks_delivered(client, db, config):
+    from gatekeeper.sms import challenges as ch
+    from sqlalchemy import select
+    config.sms.webhook_secret = "s"
+    user, token = await _make_user_with_session(db, "wh@x.com", "smsapp")
+    issued = await ch.issue_challenge(
+        db, user_id=user.id, app_slug="smsapp", e164="+61412345678",
+        session_token=token, secret_key="k",
+    )
+    await ch.attach_provider_message_id(db, issued.challenge.id, "MID-DELIVERED")
+
+    resp = await client.post(
+        "/_auth/sms/webhook/s",
+        json={"message_id": "MID-DELIVERED", "status": "Delivered"},
+    )
+    assert resp.status_code == 200
+    from gatekeeper.database import async_session_factory
+    async with async_session_factory() as fresh:
+        refreshed = await fresh.scalar(
+            select(SmsOtpChallenge).where(SmsOtpChallenge.id == issued.challenge.id)
+        )
+    assert refreshed.delivered_at is not None
+
+
+@pytest.mark.asyncio
+async def test_webhook_invalidates_pending_on_undeliverable(client, db, config):
+    from gatekeeper.sms import challenges as ch
+    from sqlalchemy import select
+    config.sms.webhook_secret = "s"
+    user, token = await _make_user_with_session(db, "wh2@x.com", "smsapp")
+    issued = await ch.issue_challenge(
+        db, user_id=user.id, app_slug="smsapp", e164="+61412345678",
+        session_token=token, secret_key="k",
+    )
+    await ch.attach_provider_message_id(db, issued.challenge.id, "MID-DEAD")
+
+    resp = await client.post(
+        "/_auth/sms/webhook/s",
+        json={"message_id": "MID-DEAD", "status": "Undeliverable"},
+    )
+    assert resp.status_code == 200
+    from gatekeeper.database import async_session_factory
+    async with async_session_factory() as fresh:
+        refreshed = await fresh.scalar(
+            select(SmsOtpChallenge).where(SmsOtpChallenge.id == issued.challenge.id)
+        )
+    assert refreshed.status == "invalidated"
+
+
+@pytest.mark.asyncio
+async def test_webhook_idempotent_on_replay(client, db, config):
+    from gatekeeper.sms import challenges as ch
+    from sqlalchemy import select
+    config.sms.webhook_secret = "s"
+    user, token = await _make_user_with_session(db, "wh3@x.com", "smsapp")
+    issued = await ch.issue_challenge(
+        db, user_id=user.id, app_slug="smsapp", e164="+61412345678",
+        session_token=token, secret_key="k",
+    )
+    await ch.attach_provider_message_id(db, issued.challenge.id, "MID-DUP")
+
+    for _ in range(3):
+        resp = await client.post(
+            "/_auth/sms/webhook/s",
+            json={"message_id": "MID-DUP", "status": "Delivered"},
+        )
+        assert resp.status_code == 200
+    # delivered_at set once; status untouched.
+    from gatekeeper.database import async_session_factory
+    async with async_session_factory() as fresh:
+        refreshed = await fresh.scalar(
+            select(SmsOtpChallenge).where(SmsOtpChallenge.id == issued.challenge.id)
+        )
+    assert refreshed.delivered_at is not None
+    assert refreshed.status == "pending"
+
+
 @pytest.mark.asyncio
 async def test_dispatcher_sms_user_with_phone_redirects_to_verify(client, db):
     user, token = await _make_user_with_session(db, "k@x.com", "smsapp")
