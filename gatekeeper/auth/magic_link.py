@@ -192,7 +192,7 @@ def _sent_page(request, app_slug, app_config, message):
         except FileNotFoundError:
             pass
 
-    return templates.TemplateResponse("auth/magic_link_sent.html", {
+    return templates.TemplateResponse(request, "auth/magic_link_sent.html", {
         "request": request,
         "app": app_slug,
         "app_name": app_name,
@@ -366,7 +366,7 @@ async def pending_page(
 
     has_waitlist = app_config.invite.waitlist if app_config else False
 
-    return templates.TemplateResponse("auth/pending.html", {
+    return templates.TemplateResponse(request, "auth/pending.html", {
         "request": request,
         "app": app_slug,
         "app_name": app_name,

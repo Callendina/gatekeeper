@@ -141,7 +141,7 @@ async def admin_dashboard(request: Request, db: AsyncSession = Depends(get_db)):
 
     pending_invite = await _pending_invite_count(db)
 
-    return templates.TemplateResponse("admin/dashboard.html", {
+    return templates.TemplateResponse(request, "admin/dashboard.html", {
         "request": request,
         "user_count": user_count,
         "blocked_count": blocked_count,
@@ -179,7 +179,7 @@ async def list_users(request: Request, db: AsyncSession = Depends(get_db)):
     phone_rows = (await db.execute(select(UserPhone))).scalars().all()
     user_phone = {p.user_id: p for p in phone_rows}
 
-    return templates.TemplateResponse("admin/users.html", {
+    return templates.TemplateResponse(request, "admin/users.html", {
         "request": request,
         "users": users,
         "user_roles": user_roles,
@@ -401,7 +401,7 @@ async def ip_blocklist_page(request: Request, db: AsyncSession = Depends(get_db)
     result = await db.execute(stmt)
     blocked = result.scalars().all()
 
-    return templates.TemplateResponse("admin/ip_blocklist.html", {
+    return templates.TemplateResponse(request, "admin/ip_blocklist.html", {
         "request": request,
         "blocked_ips": blocked,
         "admin_email": admin,
@@ -468,7 +468,7 @@ async def access_log_page(
     result = await db.execute(stmt)
     logs = result.scalars().all()
 
-    return templates.TemplateResponse("admin/access_log.html", {
+    return templates.TemplateResponse(request, "admin/access_log.html", {
         "request": request,
         "logs": logs,
         "filter_ip": ip,
@@ -567,7 +567,7 @@ async def sms_page(
     }
     app_methods["_system"] = list(_config.system_admin_mfa_methods)
 
-    return templates.TemplateResponse("admin/sms.html", {
+    return templates.TemplateResponse(request, "admin/sms.html", {
         "request": request,
         "admin_email": admin,
         "environment": _config.environment,
@@ -674,7 +674,7 @@ async def api_keys_page(
             "usage": usage,
         })
 
-    return templates.TemplateResponse("admin/api_keys.html", {
+    return templates.TemplateResponse(request, "admin/api_keys.html", {
         "request": request,
         "keys": key_info,
         "filter_app": app_slug,
@@ -760,7 +760,7 @@ async def invites_page(
     users_result = await db.execute(select(User).order_by(User.email))
     all_users = users_result.scalars().all()
 
-    return templates.TemplateResponse("admin/invites.html", {
+    return templates.TemplateResponse(request, "admin/invites.html", {
         "request": request,
         "codes": codes,
         "code_uses": code_uses,
@@ -1040,7 +1040,7 @@ async def analytics_page(
             "app_slug": row.app_slug,
         })
 
-    return templates.TemplateResponse("admin/analytics.html", {
+    return templates.TemplateResponse(request, "admin/analytics.html", {
         "request": request,
         "daily_rows": daily_rows,
         "sessions": sessions,

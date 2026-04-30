@@ -78,7 +78,7 @@ async def login_page(request: Request, app: str = "", next: str = "/"):
         except FileNotFoundError:
             pass  # Fall through to default template
 
-    return templates.TemplateResponse("auth/login.html", {
+    return templates.TemplateResponse(request, "auth/login.html", {
         "request": request,
         "app": app,
         "app_name": app_name,
@@ -111,7 +111,7 @@ async def nag_page(request: Request, app: str = "", next: str = "/"):
         except FileNotFoundError:
             pass  # Fall through to default template
 
-    return templates.TemplateResponse("auth/nag.html", {
+    return templates.TemplateResponse(request, "auth/nag.html", {
         "request": request,
         "app": app,
         "app_name": app_name,

@@ -241,7 +241,7 @@ async def enroll_get(
     issuer = issuer_for(_config)
     uri = otpauth_uri(secret, user.email, issuer)
 
-    return templates.TemplateResponse("auth/totp_enroll.html", {
+    return templates.TemplateResponse(request, "auth/totp_enroll.html", {
         "request": request,
         "secret": secret,
         "otpauth_uri": uri,
@@ -299,7 +299,7 @@ async def enroll_confirm(
         # Re-render the form with the same QR (key_num unchanged).
         issuer = issuer_for(_config)
         uri = otpauth_uri(secret, user.email, issuer)
-        return templates.TemplateResponse("auth/totp_enroll.html", {
+        return templates.TemplateResponse(request, "auth/totp_enroll.html", {
             "request": request,
             "secret": secret,
             "otpauth_uri": uri,
@@ -347,7 +347,7 @@ async def verify_get(
             url=f"/_auth/totp/enroll?next={quote(_safe_next(next))}", status_code=302
         )
 
-    return templates.TemplateResponse("auth/totp_verify.html", {
+    return templates.TemplateResponse(request, "auth/totp_verify.html", {
         "request": request,
         "user_email": user.email,
         "next": _safe_next(next),
@@ -396,7 +396,7 @@ async def verify_post(
             )
             _clear_failures(ip)
             return HTMLResponse("Blocked", status_code=403)
-        return templates.TemplateResponse("auth/totp_verify.html", {
+        return templates.TemplateResponse(request, "auth/totp_verify.html", {
             "request": request,
             "user_email": user.email,
             "next": _safe_next(next),

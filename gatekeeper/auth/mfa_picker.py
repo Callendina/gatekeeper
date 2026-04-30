@@ -136,7 +136,7 @@ async def choose_get(
             next_url=next,
         )
 
-    return templates.TemplateResponse("auth/mfa_choose.html", {
+    return templates.TemplateResponse(request, "auth/mfa_choose.html", {
         "request": request,
         "user_email": user.email,
         "next": _safe_next(next),

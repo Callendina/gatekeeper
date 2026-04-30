@@ -176,7 +176,7 @@ def _render_invite_page(request: Request, app: str, app_config, next: str,
         except FileNotFoundError:
             pass
 
-    return templates.TemplateResponse("auth/invite.html", {
+    return templates.TemplateResponse(request, "auth/invite.html", {
         "request": request,
         "app": app,
         "app_name": app_name,
@@ -297,7 +297,7 @@ async def join_waitlist(
         except FileNotFoundError:
             pass
 
-    return templates.TemplateResponse("auth/invite_waitlist_confirm.html", {
+    return templates.TemplateResponse(request, "auth/invite_waitlist_confirm.html", {
         "request": request,
         "app_name": app_config.name,
         "email": email,

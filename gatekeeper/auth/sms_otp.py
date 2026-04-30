@@ -236,7 +236,7 @@ async def enroll_get(
             status_code=302,
         )
 
-    return templates.TemplateResponse("auth/phone_enroll.html", {
+    return templates.TemplateResponse(request, "auth/phone_enroll.html", {
         "request": request,
         "user_email": user.email,
         "next": _safe_next(next),
@@ -276,7 +276,7 @@ async def enroll_post(
             status=f"sms_otp_enroll_rejected:{exc.code}",
             session_token=session.token, request=request,
         )
-        return templates.TemplateResponse("auth/phone_enroll.html", {
+        return templates.TemplateResponse(request, "auth/phone_enroll.html", {
             "request": request,
             "user_email": user.email,
             "next": _safe_next(next),
@@ -316,7 +316,7 @@ async def enroll_post(
         return sent
     challenge_id, last4 = sent
 
-    return templates.TemplateResponse("auth/sms_otp_verify.html", {
+    return templates.TemplateResponse(request, "auth/sms_otp_verify.html", {
         "request": request,
         "user_email": user.email,
         "next": _safe_next(next),
@@ -411,7 +411,7 @@ async def enroll_resend(
     if not isinstance(sent, tuple):
         return sent
     _, last4 = sent
-    return templates.TemplateResponse("auth/sms_otp_verify.html", {
+    return templates.TemplateResponse(request, "auth/sms_otp_verify.html", {
         "request": request,
         "user_email": user.email,
         "next": _safe_next(next),
@@ -475,7 +475,7 @@ async def verify_get(
     else:
         last4 = existing.target_last4
 
-    return templates.TemplateResponse("auth/sms_otp_verify.html", {
+    return templates.TemplateResponse(request, "auth/sms_otp_verify.html", {
         "request": request,
         "user_email": user.email,
         "next": _safe_next(next),
@@ -569,7 +569,7 @@ async def verify_resend(
     if not isinstance(sent, tuple):
         return sent
     _, last4 = sent
-    return templates.TemplateResponse("auth/sms_otp_verify.html", {
+    return templates.TemplateResponse(request, "auth/sms_otp_verify.html", {
         "request": request,
         "user_email": user.email,
         "next": _safe_next(next),
@@ -672,7 +672,7 @@ async def _handle_verify_result(
                 reason="bad_code",
                 failures_in_window=fails,
             )
-            return templates.TemplateResponse("auth/sms_otp_verify.html", {
+            return templates.TemplateResponse(request, "auth/sms_otp_verify.html", {
                 "request": request,
                 "user_email": user.email,
                 "next": _safe_next(next_url),
@@ -692,7 +692,7 @@ async def _handle_verify_result(
                 user_email=user.email, status="sms_otp_attempts_exceeded",
                 session_token=session.token, request=request,
             )
-            return templates.TemplateResponse("auth/sms_otp_verify.html", {
+            return templates.TemplateResponse(request, "auth/sms_otp_verify.html", {
                 "request": request,
                 "user_email": user.email,
                 "next": _safe_next(next_url),
@@ -709,7 +709,7 @@ async def _handle_verify_result(
                 user_email=user.email, status="sms_otp_expired",
                 session_token=session.token, request=request,
             )
-            return templates.TemplateResponse("auth/sms_otp_verify.html", {
+            return templates.TemplateResponse(request, "auth/sms_otp_verify.html", {
                 "request": request,
                 "user_email": user.email,
                 "next": _safe_next(next_url),
