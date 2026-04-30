@@ -18,6 +18,8 @@ from gatekeeper.auth.api_keys import router as api_key_router, init_api_key_rout
 from gatekeeper.auth.invites import router as invite_router, init_invite_routes
 from gatekeeper.auth.magic_link import router as magic_link_router, init_magic_link_routes, cleanup_expired_magic_links
 from gatekeeper.auth.totp import router as totp_router, init_totp_routes
+from gatekeeper.auth.sms_otp import router as sms_otp_router, init_sms_otp_routes
+from gatekeeper.auth.mfa_picker import router as mfa_picker_router, init_mfa_picker_routes
 from gatekeeper.admin.routes import router as admin_router, init_admin_routes
 from gatekeeper.middleware.rate_limit import cleanup_old_entries
 from gatekeeper.auth.sessions import cleanup_expired_sessions
@@ -28,13 +30,18 @@ config = load_config()
 
 async def periodic_cleanup():
     """Background task to clean up expired sessions and stale rate limit data."""
+    from gatekeeper.sms.challenges import cleanup_old_challenges, cleanup_debug_outbox
+    from gatekeeper.sms.rate_limit import cleanup_old_entries as cleanup_sms_rate_limit
     while True:
         await asyncio.sleep(300)  # Every 5 minutes
         cleanup_old_entries()
+        cleanup_sms_rate_limit()
         async for db in get_db():
             await cleanup_expired_sessions(db)
             await cleanup_expired_keys(db)
             await cleanup_expired_magic_links(db)
+            await cleanup_old_challenges(db)
+            await cleanup_debug_outbox(db)
 
 
 _started_at = None
@@ -53,6 +60,8 @@ async def lifespan(app: FastAPI):
     init_invite_routes(config)
     init_magic_link_routes(config)
     init_totp_routes(config)
+    init_sms_otp_routes(config)
+    init_mfa_picker_routes(config)
     setup_oauth(config)
 
     cleanup_task = asyncio.create_task(periodic_cleanup())
@@ -81,6 +90,8 @@ app.include_router(api_key_router)
 app.include_router(invite_router)
 app.include_router(magic_link_router)
 app.include_router(totp_router)
+app.include_router(sms_otp_router)
+app.include_router(mfa_picker_router)
 app.include_router(admin_router)
 
 

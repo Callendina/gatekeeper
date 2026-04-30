@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Enter verification code{% endblock %}
+{% block body %}
+<div class="container">
+    <h1>{{ heading or "Enter verification code" }}</h1>
+    <h2>{{ user_email }}</h2>
+
+    {% if error %}<div class="error">{{ error }}</div>{% endif %}
+    {% if notice %}<div class="notice">{{ notice }}</div>{% endif %}
+
+    <p style="margin-bottom: 1rem; font-size: 0.95rem;">
+        We sent a 6-digit code to the number ending in
+        <strong>••••{{ target_last4 }}</strong>. It expires in 5 minutes.
+    </p>
+
+    <form method="POST" action="{{ submit_url }}">
+        <input type="hidden" name="next" value="{{ next }}">
+        <input type="hidden" name="app" value="{{ app_slug }}">
+        <div class="form-group">
+            <label for="code">Verification code</label>
+            <input type="text" id="code" name="code" inputmode="numeric"
+                   pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code"
+                   autofocus required>
+        </div>
+        <button type="submit" class="btn btn-primary">Verify</button>
+    </form>
+
+    <form method="POST" action="{{ resend_url }}" style="margin-top: 0.75rem;">
+        <input type="hidden" name="next" value="{{ next }}">
+        <input type="hidden" name="app" value="{{ app_slug }}">
+        <button type="submit" class="btn btn-secondary">Resend code</button>
+    </form>
+</div>
+{% endblock %}
+
+{% block extra_head %}
+<style>
+    .container { max-width: 480px; }
+    .notice { background: #f0f7ff; border-left: 3px solid #4a90e2; padding: 0.5rem 0.75rem; margin-bottom: 0.75rem; font-size: 0.9rem; }
+</style>
+{% endblock %}

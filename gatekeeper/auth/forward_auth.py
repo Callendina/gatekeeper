@@ -48,20 +48,27 @@ def _path_matches_any(path: str, patterns: list[str]) -> bool:
     return any(fnmatch.fnmatch(path, pattern) for pattern in patterns)
 
 
-async def _check_totp_gate(
-    db, session, user, role, mfa, path: str
+async def _check_mfa_gate(
+    db, session, user, role, mfa, path: str, app_slug: str
 ):
     """If MFA is required for this user/path, return a redirect Response;
     otherwise None. Caller has already filtered to authenticated users.
 
     Decision logic:
-    - role-triggered: user's role for this app is in mfa.required_for_roles
-    - path-triggered: requested path matches one of mfa.required_for_paths
-    Either trigger requires:
-      - an enrolled (confirmed) UserTOTP — else redirect to /enroll
-      - a fresh enough session.totp_verified_at — else redirect to /verify
-    "fresh enough" = totp_verified_at is set AND (step_up_seconds == 0
-    OR verified within the last step_up_seconds).
+      1. Trigger check (role match OR path match) — if neither, no gate.
+      2. Resolve the bound method for this (user, app) via UserAppRole.mfa_method:
+           - bound = explicit value if set
+           - bound = methods[0] if app has a single offerable method
+           - auto-bind to "totp" if user already has a confirmed UserTOTP
+             and "totp" is offerable (avoids forcing the picker on
+             existing TOTP users when an app adds sms_otp later)
+           - otherwise → redirect to /_auth/mfa/choose
+      3. Dispatch to the bound method's enrol/verify endpoint:
+           - TOTP: /_auth/totp/{enroll,verify}
+           - SMS OTP: /_auth/phone/enroll OR /_auth/sms-otp/verify
+      4. "Verified enough" check uses Session.totp_verified_at for both
+         methods (column name is historical; semantically it's the last
+         MFA verification timestamp).
     """
     if not mfa.enabled:
         return None
@@ -70,26 +77,13 @@ async def _check_totp_gate(
     if not (role_triggered or path_triggered):
         return None
 
-    rec = await get_totp(db, user.id)
-    next_q = quote(path or "/")
-    if rec is None or rec.confirmed_at is None:
-        return Response(
-            status_code=302,
-            headers={"Location": f"/_auth/totp/enroll?next={next_q}"},
-        )
+    return await _dispatch_mfa(
+        db=db, session=session, user=user, app_slug=app_slug,
+        methods=mfa.methods, step_up_seconds=mfa.step_up_seconds, path=path,
+    )
 
-    needs_step_up = session.totp_verified_at is None
-    if not needs_step_up and mfa.step_up_seconds > 0:
-        age = (utcnow() - session.totp_verified_at).total_seconds()
-        if age > mfa.step_up_seconds:
-            needs_step_up = True
 
-    if needs_step_up:
-        return Response(
-            status_code=302,
-            headers={"Location": f"/_auth/totp/verify?next={next_q}"},
-        )
-    return None
+from gatekeeper.auth.mfa_dispatch import dispatch_mfa as _dispatch_mfa
 
 
 def _get_client_ip(request: Request) -> str:
@@ -233,13 +227,15 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
                 headers={"Location": f"/_auth/pending?app={app.slug}"},
             )
 
-    # 3b. TOTP / MFA gate (only for authenticated users; anon and API-key
+    # 3b. MFA gate (only for authenticated users; anon and API-key
     # requests are handled by other gates).
     if user is not None:
-        totp_response = await _check_totp_gate(db, session, user, role, app.mfa, path)
-        if totp_response is not None:
-            await _log(db, ip, app.slug, path, method, user.email, "totp_required", **_extra)
-            return totp_response
+        mfa_response = await _check_mfa_gate(
+            db, session, user, role, app.mfa, path, app.slug,
+        )
+        if mfa_response is not None:
+            await _log(db, ip, app.slug, path, method, user.email, "mfa_required", **_extra)
+            return mfa_response
 
     # 4. Check rate limit (per-app, authenticated users may get a higher limit)
     rl_ok, rl_count, rl_limit = check_rate_limit(ip, app.rate_limit, authenticated=user is not None)
@@ -504,26 +500,17 @@ async def verify_system_admin(request: Request, db: AsyncSession = Depends(get_d
         await _log(db, ip, "_system", path, method, user.email, "blocked", **_extra)
         return Response(status_code=403, content="System admin access required")
 
-    # System-admin MFA gate. We piggy-back on the same /_auth/totp/{enroll,verify}
-    # routes used by app-scoped MFA — they look up the session/user themselves.
-    # Phase 1: only TOTP is wired, so the gate fires only when TOTP is among
-    # the accepted methods. Phase 2 will dispatch to the per-(user, "_system")
-    # bound method (TOTP or SMS OTP).
-    if _config.system_admin_requires_mfa and "totp" in _config.system_admin_mfa_methods:
-        rec = await get_totp(db, user.id)
-        next_q = quote(path or "/")
-        if rec is None or rec.confirmed_at is None:
-            await _log(db, ip, "_system", path, method, user.email, "totp_required", **_extra)
-            return Response(
-                status_code=302,
-                headers={"Location": f"/_auth/totp/enroll?next={next_q}"},
-            )
-        if session is None or session.totp_verified_at is None:
-            await _log(db, ip, "_system", path, method, user.email, "totp_required", **_extra)
-            return Response(
-                status_code=302,
-                headers={"Location": f"/_auth/totp/verify?next={next_q}"},
-            )
+    # System-admin MFA gate. Dispatches to TOTP or SMS OTP per the
+    # user's binding for the `_system` pseudo-app.
+    if _config.system_admin_requires_mfa:
+        mfa_response = await _dispatch_mfa(
+            db=db, session=session, user=user, app_slug="_system",
+            methods=_config.system_admin_mfa_methods,
+            step_up_seconds=0, path=path,
+        )
+        if mfa_response is not None:
+            await _log(db, ip, "_system", path, method, user.email, "mfa_required", **_extra)
+            return mfa_response
 
     response = Response(status_code=200)
     response.headers["X-Gatekeeper-User"] = user.email

@@ -332,9 +332,82 @@ are stripped to `/` to prevent open redirects).
 
 ### Rate limiting
 
-Failed TOTP attempts are tracked per IP in memory; after 10 failures in
-10 minutes the IP is added to the blocklist (same `block_ip` mechanism
-as bad invite codes).
+Failed MFA attempts (TOTP and SMS OTP combined) are tracked per IP in
+memory; after 10 failures in 10 minutes the IP is added to the
+blocklist (same `block_ip` mechanism as bad invite codes). Sharing the
+counter across methods prevents a mixed-method attacker from doubling
+their budget.
+
+## SMS OTP
+
+SMS one-time codes are an alternative MFA method. Enable per-app by
+listing `"sms_otp"` in `mfa.methods`. Provider config lives under
+top-level `sms:` in `config.yaml`.
+
+```yaml
+sms:
+  provider: "fake"             # "fake" (dev/test) | "clicksend" (phase 3)
+  country_allowlist: ["+61"]   # E.164 prefixes — AU only at MVP
+  sender_id: "Gatekeeper"      # ≤11 alphanumeric chars, ≥1 letter
+  rate_limits:                 # five-tier sliding-window limits
+    per_number_hour: 5
+    per_number_day: 20
+    per_user_hour: 10
+    per_ip_hour: 10
+    per_app_hour: 100
+    global_hour: 200
+    global_day: 1000
+```
+
+### Routes
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /_auth/phone/enroll` | Number entry form |
+| `POST /_auth/phone/enroll` | Validate + send confirmation OTP |
+| `POST /_auth/phone/enroll/confirm` | Verify confirmation OTP, bind UserPhone |
+| `POST /_auth/phone/enroll/resend` | Invalidate in-flight, send a fresh code |
+| `GET /_auth/sms-otp/verify` | Issue + render step-up prompt |
+| `POST /_auth/sms-otp/verify` | Verify, update `session.totp_verified_at` |
+| `POST /_auth/sms-otp/resend` | Invalidate in-flight, send a fresh code |
+
+### Storage
+
+- Codes are 6 digits, generated via `secrets.randbelow`, zero-padded
+  once at the boundary; never stored in plaintext.
+- Storage form: `HMAC-SHA256(secret_key, "smsotp-v1|" + challenge_id + "|" + code)`.
+  The challenge-id binding ensures the same code in two different
+  challenges produces different HMACs.
+- Phone numbers stored as E.164 in `user_phone.e164`. Admin reset bumps
+  `key_num` (parallel with `user_totp.key_num`) to invalidate any
+  in-flight challenges and force re-confirmation.
+
+### Constraints
+
+- 5-min TTL per challenge; 5 attempts; single-use enforced via atomic
+  `UPDATE … WHERE status='pending'` rowcount.
+- Each verify is bound to the `gk_session` token that requested it.
+- Resend invalidates any in-flight pending challenge for
+  (user, app, session), so attempts can't accumulate across re-sends.
+- Default validation rejects: invalid format, non-mobile lines, VoIP,
+  numbers outside `country_allowlist`. AU-only at MVP.
+
+### Method choice (per-(user, app))
+
+When `mfa.methods` lists more than one method, users hit
+`/_auth/mfa/choose` on first MFA encounter. Their choice is recorded on
+`UserAppRole.mfa_method` and is admin-resettable only
+(`mfa.method_change_locked: true` at MVP). Single-method apps skip the
+picker. Users with an existing confirmed `UserTOTP` are auto-bound to
+TOTP if it's offered, so adding `sms_otp` to an app's methods doesn't
+force existing TOTP users through the picker.
+
+### Provider abstraction
+
+`SmsProvider` is the swap-friendly interface (see `sms/providers.py`).
+Phase 2 ships only `FakeSmsProvider`, which writes plaintext sends to
+the `debug_sms_outbox` table and stdout — used in dev and tests.
+ClickSend lands in phase 3 along with the delivery webhook.
 
 ### Admin reset
 

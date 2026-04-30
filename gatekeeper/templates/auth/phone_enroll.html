@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Add a phone number{% endblock %}
+{% block body %}
+<div class="container">
+    <h1>Add a phone number</h1>
+    <h2>{{ user_email }}</h2>
+
+    {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+    <p style="margin-bottom: 1rem; font-size: 0.95rem;">
+        We'll text a 6-digit code to confirm the number. Australian
+        mobile numbers only at this stage.
+    </p>
+
+    <form method="POST" action="/_auth/phone/enroll">
+        <input type="hidden" name="next" value="{{ next }}">
+        <input type="hidden" name="app" value="{{ app_slug }}">
+        <div class="form-group">
+            <label for="number">Mobile number</label>
+            <input type="tel" id="number" name="number" inputmode="tel"
+                   placeholder="0412 345 678" autocomplete="tel"
+                   value="{{ submitted_number or '' }}" autofocus required>
+        </div>
+        <button type="submit" class="btn btn-primary">Send confirmation code</button>
+    </form>
+</div>
+{% endblock %}
+
+{% block extra_head %}
+<style>
+    .container { max-width: 480px; }
+</style>
+{% endblock %}

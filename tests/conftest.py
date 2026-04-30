@@ -7,13 +7,15 @@ from fastapi import FastAPI
 
 from gatekeeper.config import (
     GatekeeperConfig, AppConfig, PaywallConfig, APIAccessConfig, RateLimitConfig,
-    MFAConfig,
+    MFAConfig, SMSConfig, SMSRateLimits,
 )
 from gatekeeper.database import init_db
 from gatekeeper.auth.forward_auth import router as forward_auth_router, init_forward_auth
 from gatekeeper.auth.login import router as login_router, init_login_routes
 from gatekeeper.auth.api_keys import router as api_key_router, init_api_key_routes
 from gatekeeper.auth.totp import router as totp_router, init_totp_routes
+from gatekeeper.auth.sms_otp import router as sms_otp_router, init_sms_otp_routes
+from gatekeeper.auth.mfa_picker import router as mfa_picker_router, init_mfa_picker_routes
 from gatekeeper.admin.routes import router as admin_router, init_admin_routes
 from gatekeeper.middleware.rate_limit import _request_log, _api_key_log
 from gatekeeper.middleware.ip_block import _blocked_ips
@@ -82,7 +84,42 @@ def get_test_config() -> GatekeeperConfig:
                     step_up_minutes=30,
                 ),
             ),
+            "smsapp": AppConfig(
+                slug="smsapp",
+                name="SMS App",
+                domains=["sms.example.com"],
+                protected_paths=["/protected/*"],
+                rate_limit=RateLimitConfig(requests_per_minute=100),
+                roles=["user", "admin"],
+                default_role="user",
+                mfa=MFAConfig(
+                    required_for_roles=["admin"],
+                    methods=["sms_otp"],
+                ),
+            ),
+            "multiapp": AppConfig(
+                slug="multiapp",
+                name="Multi-method App",
+                domains=["multi.example.com"],
+                protected_paths=["/protected/*"],
+                rate_limit=RateLimitConfig(requests_per_minute=100),
+                roles=["user", "admin"],
+                default_role="user",
+                mfa=MFAConfig(
+                    required_for_roles=["admin"],
+                    methods=["totp", "sms_otp"],
+                ),
+            ),
         },
+        sms=SMSConfig(
+            provider="fake",
+            country_allowlist=["+61"],
+            rate_limits=SMSRateLimits(
+                per_number_hour=3, per_number_day=10,
+                per_user_hour=5, per_ip_hour=5,
+                per_app_hour=20, global_hour=50, global_day=100,
+            ),
+        ),
     )
 
 
@@ -107,6 +144,8 @@ async def app(config):
     init_login_routes(config)
     init_api_key_routes(config)
     init_totp_routes(config)
+    init_sms_otp_routes(config)
+    init_mfa_picker_routes(config)
     init_admin_routes(config)
 
     # Build a test app directly (avoids importing gatekeeper.app which
@@ -118,6 +157,8 @@ async def app(config):
     test_app.include_router(login_router)
     test_app.include_router(api_key_router)
     test_app.include_router(totp_router)
+    test_app.include_router(sms_otp_router)
+    test_app.include_router(mfa_picker_router)
     test_app.include_router(admin_router)
 
     @test_app.get("/_auth/health")
@@ -127,9 +168,13 @@ async def app(config):
     yield test_app
 
     # Cleanup: dispose engine so Windows releases file lock
+    from gatekeeper.sms.rate_limit import reset_for_tests as reset_sms_rl
+    from gatekeeper.auth.mfa_lockout import reset_for_tests as reset_mfa_lockout
     _request_log.clear()
     _api_key_log.clear()
     _blocked_ips.clear()
+    reset_sms_rl()
+    reset_mfa_lockout()
     if db_module.engine:
         await db_module.engine.dispose()
         db_module.engine = None

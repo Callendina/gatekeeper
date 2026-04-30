@@ -30,21 +30,17 @@ def init_admin_routes(config: GatekeeperConfig):
 async def _totp_redirect_if_required(
     db: AsyncSession, user: User, session: Session | None, request: Request
 ):
-    """When system_admin_requires_mfa is set and TOTP is among the accepted
-    methods, redirect to enrol/verify if the admin user hasn't completed
-    TOTP for this session. Returns None if OK. Phase 2 will replace this
-    with a per-method dispatcher consulting UserAppRole.mfa_method for
-    app_slug='_system'."""
-    if not (_config.system_admin_requires_mfa and "totp" in _config.system_admin_mfa_methods):
+    """When system_admin_requires_mfa is set, dispatch the user to the
+    enrol/verify URL for whichever method they've bound for the `_system`
+    pseudo-app. Returns None if OK."""
+    if not _config.system_admin_requires_mfa:
         return None
-    from gatekeeper.auth.totp import get_totp
-    rec = await get_totp(db, user.id)
-    next_q = quote(request.url.path or "/_auth/admin")
-    if rec is None or rec.confirmed_at is None:
-        return RedirectResponse(url=f"/_auth/totp/enroll?next={next_q}", status_code=302)
-    if session is None or session.totp_verified_at is None:
-        return RedirectResponse(url=f"/_auth/totp/verify?next={next_q}", status_code=302)
-    return None
+    from gatekeeper.auth.mfa_dispatch import dispatch_mfa
+    return await dispatch_mfa(
+        db=db, session=session, user=user, app_slug="_system",
+        methods=_config.system_admin_mfa_methods,
+        step_up_seconds=0, path=request.url.path or "/_auth/admin",
+    )
 
 
 async def _require_admin(request: Request, db: AsyncSession):

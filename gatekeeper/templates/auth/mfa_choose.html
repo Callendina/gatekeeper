@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Choose a verification method{% endblock %}
+{% block body %}
+<div class="container">
+    <h1>Choose a verification method</h1>
+    <h2>{{ user_email }}</h2>
+
+    <p style="margin-bottom: 1rem; font-size: 0.95rem;">
+        {{ app_name }} requires an additional verification step. Pick how
+        you'd like to receive it. <strong>You can't change this later</strong>
+        — contact an admin if you need to switch methods.
+    </p>
+
+    <form method="POST" action="/_auth/mfa/choose">
+        <input type="hidden" name="next" value="{{ next }}">
+        <input type="hidden" name="app" value="{{ app_slug }}">
+
+        {% for method in methods %}
+        <label class="method-row">
+            <input type="radio" name="method" value="{{ method.id }}" {% if loop.first %}checked{% endif %}>
+            <div>
+                <strong>{{ method.label }}</strong>
+                <div class="method-desc">{{ method.description }}</div>
+            </div>
+        </label>
+        {% endfor %}
+
+        <button type="submit" class="btn btn-primary" style="margin-top: 0.75rem;">Continue</button>
+    </form>
+</div>
+{% endblock %}
+
+{% block extra_head %}
+<style>
+    .container { max-width: 480px; }
+    .method-row { display: flex; align-items: flex-start; gap: 0.6rem; padding: 0.6rem 0.75rem; border: 1px solid #ddd; border-radius: 6px; margin-bottom: 0.5rem; cursor: pointer; }
+    .method-row:has(input:checked) { border-color: #4a90e2; background: #f0f7ff; }
+    .method-row input { margin-top: 0.25rem; }
+    .method-desc { font-size: 0.85rem; color: #555; margin-top: 0.15rem; }
+</style>
+{% endblock %}

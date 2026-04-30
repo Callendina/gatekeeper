@@ -69,6 +69,11 @@ class Session(Base):
         DateTime, default=utcnow
     )
     expires_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False)
+    # Timestamp of the last successful MFA verification on this session.
+    # Used by the step-up cadence check regardless of which method
+    # (TOTP or SMS OTP) the user is bound to for the app. The column
+    # name is historical — kept rather than renamed to avoid a
+    # gratuitous schema migration.
     totp_verified_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
 
     user: Mapped["User | None"] = relationship(back_populates="sessions")
@@ -157,6 +162,23 @@ class SmsOtpChallenge(Base):
     __table_args__ = (
         Index("ix_smsotp_user_status", "user_id", "status"),
         Index("ix_smsotp_session", "gk_session_token"),
+    )
+
+
+class DebugSmsOutbox(Base):
+    """Receives plaintext sends from FakeSmsProvider so dev/test can inspect
+    codes without parsing logs. Never written to in production (where the
+    provider is ClickSend, not fake). Retention is short — pruned by the
+    same periodic cleanup that drops expired challenges."""
+    __tablename__ = "debug_sms_outbox"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    challenge_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    to_e164: Mapped[str] = mapped_column(String(20), nullable=False)
+    code: Mapped[str] = mapped_column(String(6), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    sent_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime, default=utcnow, index=True
     )
 
 

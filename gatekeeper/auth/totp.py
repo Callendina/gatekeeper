@@ -38,6 +38,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from gatekeeper._time import utcnow
 from gatekeeper.config import GatekeeperConfig
 from gatekeeper.database import get_db
+from gatekeeper.auth.mfa_lockout import (
+    FAIL_BLOCK_THRESHOLD as TOTP_FAIL_BLOCK_THRESHOLD,
+    record_failure as _record_failure_shared,
+    clear as _clear_failures_shared,
+)
 from gatekeeper.middleware.ip_block import block_ip, is_ip_blocked
 from gatekeeper.models import Session, User, UserTOTP
 
@@ -45,11 +50,6 @@ router = APIRouter(prefix="/_auth/totp")
 _config: GatekeeperConfig = None
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
 logger = logging.getLogger("gatekeeper.totp")
-
-# In-memory failure tracking per IP. Mirrors the invite_failures pattern.
-_totp_failures: dict[str, list[float]] = {}
-TOTP_FAIL_WINDOW_SECONDS = 600       # 10 minutes
-TOTP_FAIL_BLOCK_THRESHOLD = 10       # auto-block IP after this many failures in window
 
 
 def init_totp_routes(config: GatekeeperConfig):
@@ -160,18 +160,10 @@ def _verify_code(secret: str, code: str, last_counter: int) -> tuple[bool, int]:
 
 # ---- IP failure tracking ----
 
-def _record_failure(ip: str) -> int:
-    """Returns the count of failures from this IP within the rolling window."""
-    now = time.time()
-    cutoff = now - TOTP_FAIL_WINDOW_SECONDS
-    entries = [t for t in _totp_failures.get(ip, []) if t > cutoff]
-    entries.append(now)
-    _totp_failures[ip] = entries
-    return len(entries)
-
-
-def _clear_failures(ip: str):
-    _totp_failures.pop(ip, None)
+# These are shared across MFA methods (TOTP + SMS OTP) so a mixed-method
+# attacker can't get 2x the budget against a single IP.
+_record_failure = _record_failure_shared
+_clear_failures = _clear_failures_shared
 
 
 def _get_client_ip(request: Request) -> str:
