@@ -163,6 +163,16 @@ async def send_magic_link(
 
     await send_magic_link_email(email, link, app_config.name, _config.email)
 
+    import cyclops
+    cyclops.event(
+        "gatekeeper.magic_link.sent",
+        outcome="success",
+        app_slug=app_slug,
+        masked_email=cyclops.redact_email(email),
+        has_invite=has_invite,
+        expires_at=expires_at.isoformat() + "Z",
+    )
+
     return _sent_page(request, app_slug, app_config, success_msg)
 
 
@@ -277,6 +287,16 @@ async def verify_magic_link(
     # Create session
     ip = _get_client_ip(request)
     session_token = await create_session(db, user.id, ml.app_slug, ip)
+
+    import cyclops
+    cyclops.event(
+        "gatekeeper.magic_link.verified",
+        outcome="success",
+        app_slug=ml.app_slug,
+        masked_email=cyclops.redact_email(email),
+        is_new_user=is_new_user,
+        pending_invite=bool(app_role and app_role.pending_invite),
+    )
 
     # Redirect
     if app_role and app_role.pending_invite:

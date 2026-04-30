@@ -206,9 +206,17 @@ async def validate_invite(
         return HTMLResponse("<h2>Unknown app</h2>", status_code=400)
 
     ip = _get_client_ip(request)
+    import cyclops
     code_obj = await validate_invite_code_db(db, app_slug, code.strip())
     if code_obj is None:
         _invite_failures[ip] = _invite_failures.get(ip, 0) + 1
+        cyclops.event(
+            "gatekeeper.invite.validated",
+            outcome="failure",
+            app_slug=app_slug,
+            reason="invalid_or_expired",
+            failures_in_window=_invite_failures[ip],
+        )
         if _invite_failures[ip] >= INVITE_FAIL_LIMIT:
             await block_ip(db, ip, reason="Exceeded invite code attempt limit",
                            blocked_by="gatekeeper-auto")
@@ -220,6 +228,14 @@ async def validate_invite(
 
     _invite_failures.pop(ip, None)  # Clear failures on success
     use = await record_invite_use(db, code_obj, None, ip)
+
+    cyclops.event(
+        "gatekeeper.invite.validated",
+        outcome="success",
+        app_slug=app_slug,
+        invite_role=code_obj.role or "",
+        invite_group=code_obj.group or "",
+    )
 
     response = RedirectResponse(url=next, status_code=302)
     cookie_val = make_invite_cookie(use.id, code_obj.id,

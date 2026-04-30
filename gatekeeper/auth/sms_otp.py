@@ -601,6 +601,7 @@ async def _handle_verify_result(
         "/_auth/phone/enroll/resend" if is_enrolment else "/_auth/sms-otp/resend"
     )
 
+    import cyclops
     if isinstance(result, Verified):
         clear_failures(ip)
         if is_enrolment:
@@ -625,6 +626,13 @@ async def _handle_verify_result(
                 status="sms_otp_verified",
                 session_token=session.token, request=request,
             )
+        cyclops.event(
+            "gatekeeper.sms_otp.verified",
+            outcome="success",
+            app_slug=app or PHONE_ENROLL_PSEUDO_APP,
+            masked_email=cyclops.redact_email(user.email),
+            is_enrolment=is_enrolment,
+        )
         return RedirectResponse(url=_safe_next(next_url), status_code=302)
 
     if isinstance(result, VerifyFailed):
@@ -641,11 +649,28 @@ async def _handle_verify_result(
                     user_email=user.email, status="sms_otp_failed_attempt:ip_blocked",
                     session_token=session.token, request=request,
                 )
+                cyclops.event(
+                    "gatekeeper.sms_otp.verified",
+                    outcome="failure",
+                    app_slug=app or PHONE_ENROLL_PSEUDO_APP,
+                    masked_email=cyclops.redact_email(user.email),
+                    is_enrolment=is_enrolment,
+                    reason="ip_blocked",
+                )
                 return HTMLResponse("Blocked", status_code=403)
             await _record_event(
                 db, ip=ip, app_slug=app or PHONE_ENROLL_PSEUDO_APP,
                 user_email=user.email, status="sms_otp_failed_attempt",
                 session_token=session.token, request=request,
+            )
+            cyclops.event(
+                "gatekeeper.sms_otp.verified",
+                outcome="failure",
+                app_slug=app or PHONE_ENROLL_PSEUDO_APP,
+                masked_email=cyclops.redact_email(user.email),
+                is_enrolment=is_enrolment,
+                reason="bad_code",
+                failures_in_window=fails,
             )
             return templates.TemplateResponse("auth/sms_otp_verify.html", {
                 "request": request,

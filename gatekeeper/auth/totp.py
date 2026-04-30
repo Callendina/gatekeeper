@@ -278,8 +278,17 @@ async def enroll_confirm(
 
     secret = derive_secret(_config.secret_key, user.id, rec.key_num)
     ok, new_counter = _verify_code(secret, code, rec.last_counter)
+
+    import cyclops
     if not ok:
         fails = _record_failure(ip)
+        cyclops.event(
+            "gatekeeper.totp.enrolled",
+            outcome="failure",
+            masked_email=cyclops.redact_email(user.email),
+            reason="bad_code",
+            failures_in_window=fails,
+        )
         if fails >= TOTP_FAIL_BLOCK_THRESHOLD:
             await block_ip(
                 db, ip, reason="Exceeded TOTP attempt limit",
@@ -307,6 +316,11 @@ async def enroll_confirm(
     session.totp_verified_at = utcnow()
     await db.commit()
 
+    cyclops.event(
+        "gatekeeper.totp.enrolled",
+        outcome="success",
+        masked_email=cyclops.redact_email(user.email),
+    )
     return RedirectResponse(url=_safe_next(next), status_code=302)
 
 
@@ -364,8 +378,17 @@ async def verify_post(
 
     secret = derive_secret(_config.secret_key, user.id, rec.key_num)
     ok, new_counter = _verify_code(secret, code, rec.last_counter)
+
+    import cyclops
     if not ok:
         fails = _record_failure(ip)
+        cyclops.event(
+            "gatekeeper.totp.verified",
+            outcome="failure",
+            masked_email=cyclops.redact_email(user.email),
+            reason="bad_code",
+            failures_in_window=fails,
+        )
         if fails >= TOTP_FAIL_BLOCK_THRESHOLD:
             await block_ip(
                 db, ip, reason="Exceeded TOTP attempt limit",
@@ -385,4 +408,9 @@ async def verify_post(
     session.totp_verified_at = utcnow()
     await db.commit()
 
+    cyclops.event(
+        "gatekeeper.totp.verified",
+        outcome="success",
+        masked_email=cyclops.redact_email(user.email),
+    )
     return RedirectResponse(url=_safe_next(next), status_code=302)
