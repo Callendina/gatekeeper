@@ -1,0 +1,49 @@
+# Don't ship local state into the image — config + DB live in the bind-
+# mounted data/ on the host (/srv/gatekeeper/data on staging/prod).
+data/
+gatekeeper.db
+gatekeeper.db-shm
+gatekeeper.db-wal
+config.yaml
+config.d/
+
+# Local virtualenvs
+.venv/
+venv/
+env/
+ENV/
+
+# Python build artefacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Tests aren't useful in the runtime image
+tests/
+test_*.db
+test_*.db-shm
+test_*.db-wal
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+*.swo
+
+# Git
+.git/
+.gitignore
+
+# Container build artefacts
+Dockerfile
+.dockerignore
+docker-compose.yml
+
+# Claude / dev tooling
+.claude/

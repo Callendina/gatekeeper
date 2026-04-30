@@ -1,0 +1,30 @@
+# Gatekeeper — single-service stack.
+#
+# Build/run on the host:
+#   IMAGE_TAG=v123 docker compose build
+#   IMAGE_TAG=v123 docker compose up -d
+#
+# IMAGE_TAG defaults to "latest" for local dev. In the staging→prod
+# promote flow, tag is set to the bumped version number so prod can pull
+# the exact image staging built.
+#
+# Bound to 127.0.0.1:9100 only — host-side Caddy reverse-proxies (and
+# forward_auths) to it. Do NOT expose 9100 publicly.
+
+services:
+  gatekeeper:
+    build: .
+    image: gatekeeper:${IMAGE_TAG:-latest}
+    container_name: gatekeeper
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9100:9100"
+    volumes:
+      - /srv/gatekeeper/data:/app/data
+    # Route container stdout into journald so the host-side Alloy (in
+    # the cyclops stack) ingests it alongside the bare-metal services.
+    logging:
+      driver: journald
+      options:
+        tag: "{{.Name}}"
+    # Healthcheck inherited from Dockerfile.
