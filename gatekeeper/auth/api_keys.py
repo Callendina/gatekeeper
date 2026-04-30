@@ -57,6 +57,68 @@ def _get_client_ip(request: Request) -> str:
     return request.client.host
 
 
+async def issue_registered_key_for_user(
+    db: AsyncSession,
+    app,
+    user: User,
+    ip: str,
+    *,
+    override_expiry_seconds: int | None = None,
+    force: bool = False,
+) -> tuple[str | None, datetime.datetime | None, dict | None]:
+    """Mint a registered API key for (user, app), replacing any existing one.
+
+    Returns (key, expires_at, None) on success, or (None, None, error_dict) when
+    the per-app `max_registered` cap would be exceeded. `force=True` bypasses the
+    cap (admin override). `override_expiry_seconds`, when set, replaces the
+    configured `registered_key_duration_seconds`.
+    """
+    if not force:
+        counts = await count_active_keys(db, app.slug)
+        existing = await db.scalar(
+            select(func.count(APIKey.id)).where(
+                APIKey.user_id == user.id, APIKey.app_slug == app.slug,
+                APIKey.key_type == "registered",
+                APIKey.expires_at > utcnow(),
+            )
+        )
+        effective_count = counts["registered"] - (existing or 0)
+        max_reg = app.api_access.api_rate_limits.max_registered
+        if effective_count >= max_reg:
+            return None, None, {
+                "error": "Maximum registered API keys reached",
+                "type": "max_active_keys",
+                "tier": "registered",
+                "current": effective_count,
+                "limit": max_reg,
+            }
+
+    await db.execute(
+        delete(APIKey).where(
+            APIKey.user_id == user.id,
+            APIKey.app_slug == app.slug,
+            APIKey.key_type == "registered",
+        )
+    )
+
+    key = secrets.token_urlsafe(32)
+    duration = override_expiry_seconds or app.api_access.registered_key_duration_seconds
+    expires_at = utcnow() + datetime.timedelta(seconds=duration)
+
+    api_key = APIKey(
+        key=key,
+        app_slug=app.slug,
+        user_id=user.id,
+        key_type="registered",
+        ip_address=ip,
+        expires_at=expires_at,
+    )
+    db.add(api_key)
+    await db.commit()
+
+    return key, expires_at, None
+
+
 @router.post("/api-key")
 async def issue_registered_key(
     request: Request, db: AsyncSession = Depends(get_db)
@@ -71,7 +133,6 @@ async def issue_registered_key(
     if not session_token:
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
 
-    # Determine the app from the host
     host = request.headers.get("host", "")
     app = _config.app_for_domain(host)
     if app is None:
@@ -86,51 +147,9 @@ async def issue_registered_key(
 
     ip = _get_client_ip(request)
 
-    # Check active key limit (count before revoking old key)
-    counts = await count_active_keys(db, app.slug)
-    # Subtract 1 if user already has a registered key (it will be revoked)
-    existing = await db.scalar(
-        select(func.count(APIKey.id)).where(
-            APIKey.user_id == user.id, APIKey.app_slug == app.slug,
-            APIKey.key_type == "registered",
-            APIKey.expires_at > utcnow(),
-        )
-    )
-    effective_count = counts["registered"] - (existing or 0)
-    max_reg = app.api_access.api_rate_limits.max_registered
-    if effective_count >= max_reg:
-        return JSONResponse({
-            "error": "Maximum registered API keys reached",
-            "type": "max_active_keys",
-            "tier": "registered",
-            "current": effective_count,
-            "limit": max_reg,
-        }, status_code=429)
-
-    # Revoke any existing registered key for this user+app
-    await db.execute(
-        delete(APIKey).where(
-            APIKey.user_id == user.id,
-            APIKey.app_slug == app.slug,
-            APIKey.key_type == "registered",
-        )
-    )
-
-    key = secrets.token_urlsafe(32)
-    expires_at = utcnow() + datetime.timedelta(
-        seconds=app.api_access.registered_key_duration_seconds
-    )
-
-    api_key = APIKey(
-        key=key,
-        app_slug=app.slug,
-        user_id=user.id,
-        key_type="registered",
-        ip_address=ip,
-        expires_at=expires_at,
-    )
-    db.add(api_key)
-    await db.commit()
+    key, expires_at, error = await issue_registered_key_for_user(db, app, user, ip)
+    if error:
+        return JSONResponse(error, status_code=429)
 
     import cyclops
     cyclops.event(

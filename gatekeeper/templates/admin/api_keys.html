@@ -29,9 +29,23 @@
         button { padding: 0.3rem 0.6rem; border-radius: 4px; border: none; cursor: pointer; font-size: 0.8rem; }
         .btn-boost { background: #4a90d9; color: white; }
         .btn-boost:hover { background: #3a7bc8; }
+        .btn-create { background: #27ae60; color: white; }
         input[type="number"] { width: 60px; padding: 0.2rem; border: 1px solid #ddd; border-radius: 3px; font-size: 0.8rem; }
         .boost-form { display: inline-flex; gap: 0.3rem; align-items: center; }
         .override { color: #8e44ad; font-weight: bold; }
+        h3 { margin: 1.5rem 0 0.75rem; }
+        .create-form { background: white; padding: 1rem; border-radius: 8px; margin-bottom: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); display: flex; gap: 0.5rem; align-items: end; flex-wrap: wrap; }
+        .create-form .field { display: flex; flex-direction: column; }
+        .create-form label { font-size: 0.8rem; margin-bottom: 0.2rem; }
+        .create-form input, .create-form select { padding: 0.4rem; border: 1px solid #ddd; border-radius: 4px; }
+        .create-form input[type="number"] { width: 100px; }
+        .create-form input[type="email"] { min-width: 220px; }
+        .create-form .checkbox-field { flex-direction: row; align-items: center; gap: 0.3rem; padding-bottom: 0.4rem; }
+        .flash-banner { padding: 1rem; border-radius: 8px; margin-bottom: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .flash-success { background: #eafaf1; border-left: 4px solid #27ae60; color: #14532d; }
+        .flash-error { background: #fdecea; border-left: 4px solid #e74c3c; color: #6b1f1a; }
+        .flash-banner code { background: rgba(0,0,0,0.06); padding: 0.15rem 0.4rem; border-radius: 3px; font-family: ui-monospace, SFMono-Regular, monospace; user-select: all; word-break: break-all; }
+        .flash-banner .key-display { font-size: 1rem; padding: 0.5rem 0.75rem; display: block; margin: 0.5rem 0; }
     </style>
 </head>
 <body>
@@ -52,8 +66,52 @@
         </div>
     </div>
     <div class="content">
-        <h2>Active API Keys</h2>
+        <h2>API Keys</h2>
 
+        {% if issued_key %}
+        <div class="flash-banner flash-success">
+            <strong>API key issued for {{ issued_for }} ({{ issued_app }}).</strong>
+            Copy it now — it will not be shown again.
+            <code class="key-display">{{ issued_key }}</code>
+            <div style="font-size:0.85rem; opacity:0.85;">Expires {{ issued_expires.strftime('%Y-%m-%d %H:%M') }} UTC.</div>
+        </div>
+        {% endif %}
+        {% if issue_error %}
+        <div class="flash-banner flash-error"><strong>Could not issue key:</strong> {{ issue_error }}</div>
+        {% endif %}
+
+        <h3>Issue a Registered Key</h3>
+        <form class="create-form" method="POST" action="/_auth/admin/api-keys/issue">
+            <div class="field">
+                <label>App</label>
+                <select name="app_slug" required>
+                    {% for slug, app in apps.items() %}
+                    {% if app.api_access.enabled %}
+                    <option value="{{ slug }}" {{ 'selected' if slug == filter_app }}>{{ app.name }} ({{ slug }})</option>
+                    {% endif %}
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="field">
+                <label>User email</label>
+                <input type="email" name="user_email" placeholder="user@example.com" required>
+            </div>
+            <div class="field">
+                <label>Expiry override (days, 0=app default)</label>
+                <input type="number" name="expiry_override_days" value="0" min="0">
+            </div>
+            <div class="field">
+                <label>Rate limit override (req/min, 0=default)</label>
+                <input type="number" name="rate_limit_override" value="0" min="0">
+            </div>
+            <div class="field checkbox-field">
+                <input type="checkbox" name="force" value="true" id="force-cb">
+                <label for="force-cb" style="margin:0;">Force (bypass max_registered cap)</label>
+            </div>
+            <button type="submit" class="btn-create">Issue key</button>
+        </form>
+
+        <h3>Active Keys</h3>
         <form method="GET" action="/_auth/admin/api-keys" class="filters">
             <div class="field">
                 <label>App</label>

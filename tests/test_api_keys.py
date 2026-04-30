@@ -117,3 +117,58 @@ async def test_non_api_path_does_not_require_key(client):
         "x-forwarded-uri": "/",
     })
     assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_issue_registered_key_for_user_helper(client, db, config):
+    """Admin-callable helper mints a registered key, replacing any existing one,
+    and rejects when the per-app cap is hit unless force=True."""
+    from gatekeeper.auth.api_keys import issue_registered_key_for_user
+    from sqlalchemy import select, func
+    from gatekeeper.models import APIKey
+
+    user = User(email="apiuser@example.com", display_name="API User")
+    db.add(user)
+    await db.flush()
+    db.add(UserAppRole(user_id=user.id, app_slug="apiapp", role="user"))
+    await db.commit()
+
+    app = config.apps["apiapp"]
+    key1, exp1, err1 = await issue_registered_key_for_user(db, app, user, "1.2.3.4")
+    assert err1 is None and key1 and exp1 is not None
+
+    # Re-issue replaces the old key (same user+app)
+    key2, exp2, err2 = await issue_registered_key_for_user(db, app, user, "1.2.3.4")
+    assert err2 is None and key2 != key1
+    count = await db.scalar(select(func.count(APIKey.id)).where(
+        APIKey.user_id == user.id, APIKey.app_slug == "apiapp",
+        APIKey.key_type == "registered",
+    ))
+    assert count == 1
+
+    # Override expiry
+    key3, exp3, err3 = await issue_registered_key_for_user(
+        db, app, user, "1.2.3.4", override_expiry_seconds=60
+    )
+    assert err3 is None
+    delta = (exp3 - exp2).total_seconds()
+    assert delta < 0  # shorter than default
+
+    # Hitting the cap returns an error; force=True bypasses it.
+    # apiapp's max_registered defaults to 500, so simulate by patching it down.
+    saved = app.api_access.api_rate_limits.max_registered
+    app.api_access.api_rate_limits.max_registered = 1
+    try:
+        u2 = User(email="other@example.com", display_name="Other")
+        db.add(u2)
+        await db.flush()
+        await db.commit()
+        _, _, err = await issue_registered_key_for_user(db, app, u2, "1.2.3.4")
+        assert err is not None and err["type"] == "max_active_keys"
+
+        forced_key, _, err_forced = await issue_registered_key_for_user(
+            db, app, u2, "1.2.3.4", force=True
+        )
+        assert err_forced is None and forced_key
+    finally:
+        app.api_access.api_rate_limits.max_registered = saved

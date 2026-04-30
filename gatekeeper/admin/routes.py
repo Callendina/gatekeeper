@@ -600,16 +600,13 @@ def _parse_cost_from_status(status: str) -> int | None:
         return None
 
 
-@router.get("/api-keys")
-async def api_keys_page(
+async def _render_api_keys_page(
     request: Request,
-    app_slug: str = "",
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession,
+    admin: str,
+    app_slug: str,
+    extra: dict | None = None,
 ):
-    admin, redirect = _check_admin(await _require_admin(request, db))
-    if redirect:
-        return redirect
-
     from gatekeeper.middleware.rate_limit import _api_key_log
     import time
 
@@ -620,12 +617,10 @@ async def api_keys_page(
     result = await db.execute(stmt)
     keys = result.scalars().all()
 
-    # Build key info with usage stats and default limits
     key_info = []
     current_time = time.time()
     window = 60.0
     for k in keys:
-        # Determine tier and default limit
         if k.key_type == "registered":
             tier = "registered"
         elif k.user_id is not None:
@@ -646,12 +641,10 @@ async def api_keys_page(
 
         effective_limit = k.rate_limit_override if k.rate_limit_override > 0 else default_limit
 
-        # Get current weighted usage from in-memory tracker
         entries = _api_key_log.get(k.key, [])
         cutoff = current_time - window
         usage = sum(w for t, w in entries if t > cutoff)
 
-        # Look up user email
         user_email = None
         if k.user_id:
             user_result = await db.execute(select(User).where(User.id == k.user_id))
@@ -674,7 +667,7 @@ async def api_keys_page(
             "usage": usage,
         })
 
-    return templates.TemplateResponse(request, "admin/api_keys.html", {
+    ctx = {
         "request": request,
         "keys": key_info,
         "filter_app": app_slug,
@@ -684,7 +677,115 @@ async def api_keys_page(
         "terminal_enabled": _config.terminal_enabled,
         "corkboard_enabled": _config.corkboard_enabled,
         "pending_waitlist": await _pending_waitlist_count(db),
-    })
+    }
+    if extra:
+        ctx.update(extra)
+    return templates.TemplateResponse(request, "admin/api_keys.html", ctx)
+
+
+@router.get("/api-keys")
+async def api_keys_page(
+    request: Request,
+    app_slug: str = "",
+    db: AsyncSession = Depends(get_db),
+):
+    admin, redirect = _check_admin(await _require_admin(request, db))
+    if redirect:
+        return redirect
+    return await _render_api_keys_page(request, db, admin, app_slug)
+
+
+@router.post("/api-keys/issue")
+async def issue_admin_api_key(
+    request: Request,
+    app_slug: str = Form(...),
+    user_email: str = Form(...),
+    expiry_override_days: int = Form(0),
+    rate_limit_override: int = Form(0),
+    force: bool = Form(False),
+    db: AsyncSession = Depends(get_db),
+):
+    admin, redirect = _check_admin(await _require_admin(request, db))
+    if redirect:
+        return redirect
+
+    from gatekeeper.auth.api_keys import issue_registered_key_for_user
+
+    app = _config.apps.get(app_slug)
+    if app is None:
+        return await _render_api_keys_page(
+            request, db, admin, "",
+            extra={"issue_error": f"Unknown app: {app_slug}"},
+        )
+    if not app.api_access.enabled:
+        return await _render_api_keys_page(
+            request, db, admin, app_slug,
+            extra={"issue_error": f"API access not enabled for app '{app_slug}'."},
+        )
+
+    email_norm = user_email.strip().lower()
+    if not email_norm:
+        return await _render_api_keys_page(
+            request, db, admin, app_slug,
+            extra={"issue_error": "Email is required."},
+        )
+    user_result = await db.execute(select(User).where(User.email == email_norm))
+    user = user_result.scalar_one_or_none()
+    if user is None:
+        return await _render_api_keys_page(
+            request, db, admin, app_slug,
+            extra={"issue_error": f"No user found with email '{email_norm}'."},
+        )
+
+    override_expiry = expiry_override_days * 86400 if expiry_override_days > 0 else None
+    forwarded = request.headers.get("x-forwarded-for", "")
+    ip = forwarded.split(",")[0].strip() if forwarded else (request.client.host if request.client else "")
+
+    key, expires_at, error = await issue_registered_key_for_user(
+        db, app, user, ip,
+        override_expiry_seconds=override_expiry,
+        force=force,
+    )
+    if error:
+        return await _render_api_keys_page(
+            request, db, admin, app_slug,
+            extra={
+                "issue_error": (
+                    f"{error['error']} (current: {error['current']}, "
+                    f"limit: {error['limit']}). Tick 'Force' to override."
+                ),
+            },
+        )
+
+    if rate_limit_override > 0:
+        result = await db.execute(select(APIKey).where(APIKey.key == key))
+        api_key_obj = result.scalar_one_or_none()
+        if api_key_obj:
+            api_key_obj.rate_limit_override = rate_limit_override
+            await db.commit()
+
+    import cyclops
+    cyclops.event(
+        "gatekeeper.api_key.issued",
+        outcome="success",
+        actor=f"admin:{admin}",
+        app_slug=app_slug,
+        key_type="registered",
+        masked_email=cyclops.redact_email(user.email),
+        masked_key=cyclops.redact_token(key),
+        expires_at=expires_at.isoformat() + "Z",
+        forced=force,
+    )
+
+    return await _render_api_keys_page(
+        request, db, admin, app_slug,
+        extra={
+            "issued_key": key,
+            "issued_for": user.email,
+            "issued_app": app_slug,
+            "issued_expires": expires_at,
+        },
+    )
 
 
 @router.post("/api-keys/{key_id}/boost")
