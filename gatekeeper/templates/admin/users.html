@@ -29,6 +29,7 @@
             <a href="/_auth/admin/ip-blocklist">IP Blocklist</a>
             <a href="/_auth/admin/access-log">Access Log</a>
             <a href="/_auth/admin/api-keys">API Keys</a>
+            <a href="/_auth/admin/sms">SMS</a>
             <a href="/_auth/admin/analytics">Analytics</a>
             <a href="/_auth/admin/invites">Invites{% if pending_waitlist %} <span style="background:#e74c3c;color:white;border-radius:10px;padding:1px 6px;font-size:0.75rem;">{{ pending_waitlist }}</span>{% endif %}</a>
             {% if terminal_enabled %}<a href="/_term/" title="Web terminal (system admin only)">Terminal</a>{% endif %}
@@ -63,17 +64,27 @@
                     <td class="local-date" data-utc="{{ user.created_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}">{{ user.created_at.strftime('%Y-%m-%d') }}</td>
                     <td>
                         {% set t = user_totp.get(user.id) %}
+                        {% set p = user_phone.get(user.id) %}
                         {% if t and t.confirmed_at %}
-                            <span style="color:#27ae60;font-size:0.85rem;">enrolled</span><br>
+                            <span style="color:#27ae60;font-size:0.85rem;">TOTP: enrolled</span><br>
                             <span class="local-date" data-utc="{{ t.confirmed_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}" style="color:#666;font-size:0.75rem;">{{ t.confirmed_at.strftime('%Y-%m-%d') }}</span><br>
+                        {% elif t %}
+                            <span style="color:#e67e22;font-size:0.85rem;">TOTP: started</span><br>
+                        {% endif %}
+                        {% if p and p.confirmed_at %}
+                            <span style="color:#27ae60;font-size:0.85rem;">SMS: ••••{{ p.e164[-4:] }}</span><br>
+                            <span class="local-date" data-utc="{{ p.confirmed_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}" style="color:#666;font-size:0.75rem;">{{ p.confirmed_at.strftime('%Y-%m-%d') }}</span><br>
+                        {% elif p %}
+                            <span style="color:#e67e22;font-size:0.85rem;">SMS: started</span><br>
+                        {% endif %}
+                        {% if not t and not p %}
+                            <span style="color:#999;font-size:0.85rem;">none</span><br>
+                        {% endif %}
+                        {% if (t and t.confirmed_at) or (p and p.confirmed_at) %}
                             <form method="POST" action="/_auth/admin/users/{{ user.id }}/totp/reset" style="display:inline;margin-top:0.2rem;"
-                                  onsubmit="return confirm('Reset MFA for {{ user.email }}? They will need to enroll again on next protected access. Active step-up sessions will also be cleared.');">
+                                  onsubmit="return confirm('Reset all MFA for {{ user.email }}? Clears TOTP, phone enrolment, and per-app method bindings. They will need to enroll again on next protected access. Active step-up sessions will also be cleared.');">
                                 <button type="submit" style="background:#e67e22;font-size:0.75rem;padding:0.15rem 0.4rem;">Reset MFA</button>
                             </form>
-                        {% elif t %}
-                            <span style="color:#e67e22;font-size:0.85rem;">started</span>
-                        {% else %}
-                            <span style="color:#999;font-size:0.85rem;">none</span>
                         {% endif %}
                     </td>
                     <td>
@@ -96,7 +107,7 @@
                                     </form>
                                 </span><br>
                             {% else %}
-                                <span>{{ role.app_slug }}: <strong>{{ role.role }}</strong>{% if role.group %} <span style="color:#666;">/ {{ role.group }}</span>{% endif %}</span><br>
+                                <span>{{ role.app_slug }}: <strong>{{ role.role }}</strong>{% if role.group %} <span style="color:#666;">/ {{ role.group }}</span>{% endif %}{% if role.mfa_method %} <span style="color:#888;font-size:0.75rem;">[{{ role.mfa_method }}]</span>{% endif %}</span><br>
                             {% endif %}
                         {% endfor %}
                         {% for slug, app_cfg in apps.items() %}

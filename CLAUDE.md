@@ -450,6 +450,33 @@ Startup logs a loud warning when `clicksend` is selected with
 - Unknown `message_id` → silent 200 (no info-leak about which IDs we
   know about).
 
+### Threat model (apps that opt in inherit this)
+
+**Defends:** OAuth credential takeover where the attacker has email
+access but not the phone; basic phishing; single-device session
+compromise.
+
+**Does not defend:**
+- **SIM swap** — carrier moves the number to an attacker's SIM. TOTP
+  is strictly stronger here.
+- **SMS interception via SS7** — protocol-level attack on the carrier
+  signalling network.
+- **Real-time phishing proxies** (Evilginx-style) — they relay the code
+  in real time. Only WebAuthn defends against this.
+- **Phone malware with SMS-read permission**.
+- **Carrier social engineering**.
+
+**Why ship it anyway:** users without authenticator apps can still get
+MFA; recoverable via the carrier (lose phone, keep number); works on a
+borrowed device. NIST SP 800-63B classifies SMS as RESTRICTED — the
+posture above is informed by, not bound to, that guidance. The
+VoIP-rejection check is cheap and worth applying.
+
+**Stronger settings for sensitive paths:** apps that genuinely need
+SIM-swap-resistant MFA should set `mfa.methods: ["totp"]` rather than
+`["totp", "sms_otp"]`, or apply that posture only to `required_for_paths`
+that match the sensitive routes.
+
 ### Operator alerting
 
 Gatekeeper emits structured events into `access_log` rather than firing

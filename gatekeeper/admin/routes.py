@@ -11,7 +11,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from gatekeeper._time import utcnow
 from gatekeeper.database import get_db
 from gatekeeper.config import GatekeeperConfig
-from gatekeeper.models import User, UserAppRole, OAuthAccount, IPBlocklist, AccessLog, Session, APIKey, InviteCode, InviteUse, InviteWaitlist, InviteUserLimit, UserTOTP
+from gatekeeper.models import (
+    User, UserAppRole, OAuthAccount, IPBlocklist, AccessLog, Session,
+    APIKey, InviteCode, InviteUse, InviteWaitlist, InviteUserLimit,
+    UserTOTP, UserPhone, SmsOtpChallenge,
+)
 from gatekeeper.middleware.ip_block import block_ip, unblock_ip
 from gatekeeper.auth.sessions import validate_session
 
@@ -172,12 +176,15 @@ async def list_users(request: Request, db: AsyncSession = Depends(get_db)):
     # MFA enrollment status per user (None / unconfirmed / datetime)
     totp_rows = (await db.execute(select(UserTOTP))).scalars().all()
     user_totp = {t.user_id: t for t in totp_rows}
+    phone_rows = (await db.execute(select(UserPhone))).scalars().all()
+    user_phone = {p.user_id: p for p in phone_rows}
 
     return templates.TemplateResponse("admin/users.html", {
         "request": request,
         "users": users,
         "user_roles": user_roles,
         "user_totp": user_totp,
+        "user_phone": user_phone,
         "apps": _config.apps,
         "admin_email": admin,
         "environment": _config.environment,
@@ -194,16 +201,54 @@ async def admin_reset_totp(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
-    """Bumps the user's key_num and clears confirmed_at, forcing re-enrollment
-    with a fresh TOTP secret on next protected access."""
+    """Resets all MFA state for the user — TOTP, phone, and any
+    per-(user, app) method bindings — forcing fresh enrolment on next
+    protected access. The route name is historical; it now resets every
+    factor the user has, not just TOTP.
+
+    Specifically:
+    - Bumps `user_totp.key_num`, clears `confirmed_at` and `last_counter`
+      (existing TOTP behaviour).
+    - Bumps `user_phone.key_num`, clears `confirmed_at` (so any in-flight
+      SMS challenges become unverifiable and the user must re-confirm
+      the number).
+    - Clears `mfa_method` on every UserAppRole row for the user, so the
+      method picker fires again on next MFA encounter.
+    - Clears `totp_verified_at` on every active session so already-stepped-up
+      sessions can't keep bypassing the gate.
+    """
     admin, redirect = _check_admin(await _require_admin(request, db))
     if redirect:
         return redirect
 
+    from sqlalchemy import update
     from gatekeeper.auth.totp import reset_totp
+
     await reset_totp(db, user_id)
-    # Also revoke any existing totp_verified_at so the user can't keep
-    # bypassing the gate on already-stepped-up sessions.
+
+    # Bump phone key_num + clear confirmed_at if the user had a phone
+    # enrolled. The bump invalidates any in-flight SMS challenges by
+    # making the secret pepper they were derived under no longer match
+    # — though challenge HMACs don't include key_num today, the
+    # forced-re-enrolment of confirmed_at means new challenges have to
+    # be issued post-confirmation anyway.
+    phone = await db.scalar(
+        select(UserPhone).where(UserPhone.user_id == user_id)
+    )
+    if phone is not None:
+        phone.key_num += 1
+        phone.confirmed_at = None
+        phone.last_change_at = utcnow()
+
+    # Clear method bindings for every app this user has a role for, so
+    # the picker (or single-method auto-bind) runs fresh on next MFA hit.
+    await db.execute(
+        update(UserAppRole)
+        .where(UserAppRole.user_id == user_id)
+        .values(mfa_method=None)
+    )
+
+    # Revoke any existing totp_verified_at on this user's sessions.
     sessions = (await db.execute(
         select(Session).where(Session.user_id == user_id, Session.totp_verified_at.isnot(None))
     )).scalars().all()
@@ -437,6 +482,122 @@ async def access_log_page(
         "corkboard_enabled": _config.corkboard_enabled,
         "pending_waitlist": await _pending_waitlist_count(db),
     })
+
+
+@router.get("/sms")
+async def sms_page(
+    request: Request,
+    drop_app: str = "",
+    drop_method: str = "",
+    db: AsyncSession = Depends(get_db),
+):
+    """SMS-OTP operations dashboard. Pulls data from two sources:
+      - sms_otp_challenges (recent activity, last 50)
+      - access_log filtered by `sms_otp_*` status strings (spend / errors)
+    """
+    admin, redirect = _check_admin(await _require_admin(request, db))
+    if redirect:
+        return redirect
+
+    now = utcnow()
+    last_24h = now - datetime.timedelta(hours=24)
+    last_7d = now - datetime.timedelta(days=7)
+
+    # --- Recent challenges (no plaintext code, no full number)
+    recent_stmt = (
+        select(SmsOtpChallenge)
+        .order_by(SmsOtpChallenge.issued_at.desc())
+        .limit(50)
+    )
+    recent = (await db.execute(recent_stmt)).scalars().all()
+
+    # --- Spend (24h + 7d) parsed from sms_otp_sent_to_provider events
+    spend_stmt = (
+        select(AccessLog.app_slug, AccessLog.status, AccessLog.timestamp)
+        .where(
+            AccessLog.status.like("sms_otp_sent_to_provider:%"),
+            AccessLog.timestamp >= last_7d,
+        )
+    )
+    spend_rows = (await db.execute(spend_stmt)).all()
+    spend_24h: dict[str, int] = {}
+    spend_7d: dict[str, int] = {}
+    sent_24h_count = 0
+    for app_slug, status, ts in spend_rows:
+        # status format: "sms_otp_sent_to_provider:<provider>:cost=<cents>"
+        cost = _parse_cost_from_status(status)
+        if cost is None or cost < 0:
+            continue
+        spend_7d[app_slug] = spend_7d.get(app_slug, 0) + cost
+        if ts >= last_24h:
+            spend_24h[app_slug] = spend_24h.get(app_slug, 0) + cost
+            sent_24h_count += 1
+
+    # --- Failure breakdown over the last 24h
+    failure_stmt = (
+        select(AccessLog.status, func.count(AccessLog.id))
+        .where(
+            AccessLog.status.like("sms_otp_send_failed:%"),
+            AccessLog.timestamp >= last_24h,
+        )
+        .group_by(AccessLog.status)
+    )
+    failures = [
+        {"category": status.split(":", 1)[1] if ":" in status else status, "count": n}
+        for status, n in (await db.execute(failure_stmt)).all()
+    ]
+
+    # --- Drop-method preview: count users currently bound to a method on an app
+    preview = None
+    if drop_app and drop_method:
+        bound_count = await db.scalar(
+            select(func.count(UserAppRole.id)).where(
+                UserAppRole.app_slug == drop_app,
+                UserAppRole.mfa_method == drop_method,
+            )
+        )
+        preview = {
+            "app": drop_app, "method": drop_method,
+            "count": int(bound_count or 0),
+        }
+
+    # --- App→methods mapping for the drop-method form
+    app_methods = {
+        slug: list(app_cfg.mfa.methods) for slug, app_cfg in _config.apps.items()
+    }
+    app_methods["_system"] = list(_config.system_admin_mfa_methods)
+
+    return templates.TemplateResponse("admin/sms.html", {
+        "request": request,
+        "admin_email": admin,
+        "environment": _config.environment,
+        "terminal_enabled": _config.terminal_enabled,
+        "corkboard_enabled": _config.corkboard_enabled,
+        "pending_waitlist": await _pending_waitlist_count(db),
+        "pending_invite": await _pending_invite_count(db),
+        "recent": recent,
+        "spend_24h": spend_24h,
+        "spend_7d": spend_7d,
+        "sent_24h_count": sent_24h_count,
+        "failures": failures,
+        "app_methods": app_methods,
+        "preview": preview,
+        "sms_provider": _config.sms.provider,
+        "sms_test_mode": _config.sms.test_mode,
+    })
+
+
+def _parse_cost_from_status(status: str) -> int | None:
+    """Pull cost cents out of `sms_otp_sent_to_provider:<provider>:cost=<n>`.
+    Returns None on parse failure (treated as "no cost data" — won't sum)."""
+    marker = "cost="
+    idx = status.rfind(marker)
+    if idx < 0:
+        return None
+    try:
+        return int(status[idx + len(marker):])
+    except ValueError:
+        return None
 
 
 @router.get("/api-keys")

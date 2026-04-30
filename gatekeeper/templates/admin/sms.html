@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>SMS OTP - Gatekeeper Admin</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f5f5; color: #333; }
+        .nav { background: #2c3e50; color: white; padding: 1rem 2rem; display: flex; justify-content: space-between; align-items: center; }
+        .nav a { color: #ecf0f1; text-decoration: none; margin-left: 1.5rem; }
+        .nav a:hover { color: white; }
+        .content { max-width: 1200px; margin: 2rem auto; padding: 0 1rem; }
+        h2 { margin-bottom: 1rem; }
+        h3 { margin: 1.5rem 0 0.5rem; color: #2c3e50; font-size: 1rem; }
+        .panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; margin-bottom: 1rem; }
+        .panel { background: white; padding: 1rem; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .panel h3 { margin-top: 0; font-size: 0.85rem; color: #888; text-transform: uppercase; letter-spacing: 0.05em; }
+        .big { font-size: 1.6rem; font-weight: 600; color: #2c3e50; }
+        table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); font-size: 0.85rem; }
+        th, td { padding: 0.5rem 0.75rem; text-align: left; border-bottom: 1px solid #eee; }
+        th { background: #f8f9fa; font-weight: 600; }
+        .status-pending { color: #888; }
+        .status-verified { color: #27ae60; }
+        .status-consumed { color: #888; }
+        .status-expired, .status-invalidated { color: #c0392b; }
+        .status-delivered { color: #27ae60; }
+        .pill { display: inline-block; padding: 0.05rem 0.5rem; border-radius: 10px; font-size: 0.75rem; background: #e8eef4; color: #2c3e50; }
+        .pill-warn { background: #fef5e7; color: #c87f0a; }
+        .form-card { background: white; padding: 1rem; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 1rem; }
+        .form-row { display: flex; gap: 0.5rem; align-items: end; flex-wrap: wrap; }
+        select, button, input { padding: 0.4rem 0.6rem; border: 1px solid #ddd; border-radius: 4px; font-size: 0.85rem; }
+        button { background: #4a90d9; color: white; border: none; cursor: pointer; }
+        button:hover { background: #3a7bc8; }
+    </style>
+</head>
+<body>
+    <div class="nav">
+        <strong>Gatekeeper Admin</strong>{% if environment %}<span style="color:#e74c3c;font-weight:bold;margin-left:1rem;font-size:0.9rem;">{{ environment }}</span>{% endif %}
+        <div>
+            <a href="/_auth/admin">Dashboard</a>
+            <a href="/_auth/admin/users">Users</a>
+            <a href="/_auth/admin/ip-blocklist">IP Blocklist</a>
+            <a href="/_auth/admin/access-log">Access Log</a>
+            <a href="/_auth/admin/api-keys">API Keys</a>
+            <a href="/_auth/admin/sms">SMS</a>
+            <a href="/_auth/admin/analytics">Analytics</a>
+            <a href="/_auth/admin/invites">Invites{% if pending_waitlist %} <span style="background:#e74c3c;color:white;border-radius:10px;padding:1px 6px;font-size:0.75rem;">{{ pending_waitlist }}</span>{% endif %}</a>
+            {% if terminal_enabled %}<a href="/_term/" title="Web terminal (system admin only)">Terminal</a>{% endif %}
+            {% if corkboard_enabled %}<a href="/corkboard/" title="Roadmap / bug tracker (system admin only)">Corkboard</a>{% endif %}
+            <span style="margin-left:1.5rem; opacity:0.7;">{{ admin_email }}</span>
+        </div>
+    </div>
+    <div class="content">
+        <h2>SMS OTP <span class="pill {% if sms_provider != 'fake' and not sms_test_mode %}pill-warn{% endif %}">provider: {{ sms_provider }}{% if sms_test_mode %} (test_mode){% endif %}</span></h2>
+
+        <div class="panels">
+            <div class="panel">
+                <h3>Sent (last 24h)</h3>
+                <div class="big">{{ sent_24h_count }}</div>
+            </div>
+            <div class="panel">
+                <h3>Spend (last 24h)</h3>
+                <div class="big">${{ '%.2f'|format(spend_24h.values()|sum / 100.0) }}</div>
+                {% if spend_24h %}
+                <div style="font-size:0.8rem;color:#666;margin-top:0.4rem;">
+                    {% for slug, cents in spend_24h.items() %}
+                        {{ slug }}: ${{ '%.2f'|format(cents / 100.0) }}{% if not loop.last %}, {% endif %}
+                    {% endfor %}
+                </div>
+                {% endif %}
+            </div>
+            <div class="panel">
+                <h3>Spend (last 7d)</h3>
+                <div class="big">${{ '%.2f'|format(spend_7d.values()|sum / 100.0) }}</div>
+            </div>
+            <div class="panel">
+                <h3>Send failures (last 24h)</h3>
+                {% if failures %}
+                    {% for f in failures %}
+                    <div style="font-size:0.85rem;">{{ f.category }}: <strong>{{ f.count }}</strong></div>
+                    {% endfor %}
+                {% else %}
+                    <div style="color:#27ae60;">none</div>
+                {% endif %}
+            </div>
+        </div>
+
+        <h3>Drop-method preview</h3>
+        <div class="form-card">
+            <p style="margin-bottom:0.6rem;font-size:0.85rem;color:#555;">
+                Before removing a method from an app's <code>mfa.methods</code>, check
+                how many users are currently bound to it. Those users can't clear MFA
+                on the app until you reset them.
+            </p>
+            <form method="GET" action="/_auth/admin/sms" class="form-row">
+                <div>
+                    <label style="font-size:0.75rem;display:block;color:#666;">App</label>
+                    <select name="drop_app" required>
+                        <option value="">— pick app —</option>
+                        {% for slug, methods in app_methods.items() %}
+                        <option value="{{ slug }}" {% if preview and preview.app == slug %}selected{% endif %}>{{ slug }} ({{ methods|join(', ') }})</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div>
+                    <label style="font-size:0.75rem;display:block;color:#666;">Method to drop</label>
+                    <select name="drop_method" required>
+                        <option value="totp" {% if preview and preview.method == 'totp' %}selected{% endif %}>totp</option>
+                        <option value="sms_otp" {% if preview and preview.method == 'sms_otp' %}selected{% endif %}>sms_otp</option>
+                    </select>
+                </div>
+                <button type="submit">Check</button>
+            </form>
+            {% if preview %}
+            <div style="margin-top:0.8rem;padding:0.6rem;background:{% if preview.count > 0 %}#fef5e7{% else %}#eafaf1{% endif %};border-radius:4px;font-size:0.9rem;">
+                {% if preview.count > 0 %}
+                    <strong>{{ preview.count }}</strong> user{{ 's' if preview.count != 1 }}
+                    bound to <code>{{ preview.method }}</code> on <code>{{ preview.app }}</code>.
+                    They will be locked out until you reset them after the config flip.
+                {% else %}
+                    No users bound to <code>{{ preview.method }}</code> on <code>{{ preview.app }}</code>. Safe to drop.
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+
+        <h3>Recent challenges (50)</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Issued</th>
+                    <th>App</th>
+                    <th>To</th>
+                    <th>Status</th>
+                    <th>Attempts</th>
+                    <th>Delivered</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for c in recent %}
+                <tr>
+                    <td class="local-date" data-utc="{{ c.issued_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}">{{ c.issued_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                    <td>{{ c.app_slug }}</td>
+                    <td><code>••••{{ c.target_last4 }}</code></td>
+                    <td class="status-{{ c.status }}">{{ c.status }}</td>
+                    <td>{{ c.attempts_used }}</td>
+                    <td>{% if c.delivered_at %}<span class="status-delivered">✓</span>{% else %}—{% endif %}</td>
+                </tr>
+                {% endfor %}
+                {% if not recent %}
+                <tr><td colspan="6" style="text-align:center;color:#999;padding:1rem;">No SMS-OTP challenges yet.</td></tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+<script>
+document.querySelectorAll('.local-date').forEach(el => {
+    const utc = el.dataset.utc;
+    if (!utc) return;
+    const d = new Date(utc);
+    el.textContent = d.toLocaleString();
+});
+</script>
+</body>
+</html>
