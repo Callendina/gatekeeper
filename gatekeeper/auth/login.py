@@ -281,6 +281,15 @@ async def _handle_oauth_callback(
     if (app_config and app_config.allowed_emails
             and not on_email_whitelist
             and invite_use_id is None):
+        import cyclops
+        cyclops.event(
+            "gatekeeper.login.completed",
+            outcome="failure",
+            provider=provider,
+            app_slug=app_slug or "",
+            masked_email=cyclops.redact_email(email),
+            reason="not_on_allowed_emails",
+        )
         return HTMLResponse(
             "<h2>Access denied</h2><p>Your account is not authorised for this application.</p>",
             status_code=403,
@@ -401,6 +410,16 @@ async def _handle_oauth_callback(
     # Determine where to redirect
     current_host = request.headers.get("host", "")
     target_host = origin_host or (app_config.domains[0] if app_config and app_config.domains else "")
+
+    import cyclops
+    cyclops.event(
+        "gatekeeper.login.completed",
+        outcome="success",
+        provider=provider,
+        app_slug=app_slug or "",
+        masked_email=cyclops.redact_email(email),
+        is_new_user=oauth_account is None,
+    )
 
     # If the callback happened on a different domain (e.g. GitHub with a fixed
     # callback domain), redirect via /_auth/set-session on the target host so

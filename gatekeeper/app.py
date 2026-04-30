@@ -1,6 +1,8 @@
 """Main FastAPI application for Gatekeeper."""
 import asyncio
 import datetime
+import os
+import subprocess
 from pathlib import Path
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, Request
@@ -10,22 +12,55 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from gatekeeper._time import utcnow
 from gatekeeper.config import load_config
-from gatekeeper.database import init_db, backfill_mfa_method
-from gatekeeper.auth.forward_auth import router as forward_auth_router, init_forward_auth
-from gatekeeper.auth.login import router as login_router, init_login_routes
-from gatekeeper.auth.oauth import setup_oauth
-from gatekeeper.auth.api_keys import router as api_key_router, init_api_key_routes, cleanup_expired_keys
-from gatekeeper.auth.invites import router as invite_router, init_invite_routes
-from gatekeeper.auth.magic_link import router as magic_link_router, init_magic_link_routes, cleanup_expired_magic_links
-from gatekeeper.auth.totp import router as totp_router, init_totp_routes
-from gatekeeper.auth.sms_otp import router as sms_otp_router, init_sms_otp_routes
-from gatekeeper.auth.mfa_picker import router as mfa_picker_router, init_mfa_picker_routes
-from gatekeeper.admin.routes import router as admin_router, init_admin_routes
-from gatekeeper.middleware.rate_limit import cleanup_old_entries
-from gatekeeper.auth.sessions import cleanup_expired_sessions
-from gatekeeper.database import get_db
 
+
+# App version: git commit count // 100 (Callendina fleet convention).
+def _gatekeeper_version() -> int:
+    try:
+        count = int(subprocess.check_output(
+            ["git", "rev-list", "--count", "HEAD"],
+            cwd=str(Path(__file__).parent.parent),
+            stderr=subprocess.DEVNULL,
+        ).decode().strip())
+        return count // 100
+    except Exception:
+        return 0
+
+
+APP_VERSION = _gatekeeper_version()
+
+
+# Load gatekeeper config first so we can derive ENVIRONMENT for cyclops from
+# config.environment ("STAGING" / "PROD" / ""). This must happen before the
+# `import cyclops` below.
 config = load_config()
+
+
+# Cyclops env vars must be set before `import cyclops` so the library's config
+# picks them up on first emission.
+os.environ.setdefault("APP_NAME", "gatekeeper")
+os.environ.setdefault(
+    "ENVIRONMENT",
+    "staging" if (config.environment or "").lower().startswith("staging") else "prod",
+)
+os.environ.setdefault("APP_VERSION", f"v{APP_VERSION}")
+os.environ.setdefault("CYCLOPS_COMPONENT", "gatekeeper.web")
+
+import cyclops  # noqa: E402 — must follow env var setup above
+from gatekeeper.database import init_db, backfill_mfa_method  # noqa: E402
+from gatekeeper.auth.forward_auth import router as forward_auth_router, init_forward_auth  # noqa: E402
+from gatekeeper.auth.login import router as login_router, init_login_routes  # noqa: E402
+from gatekeeper.auth.oauth import setup_oauth  # noqa: E402
+from gatekeeper.auth.api_keys import router as api_key_router, init_api_key_routes, cleanup_expired_keys  # noqa: E402
+from gatekeeper.auth.invites import router as invite_router, init_invite_routes  # noqa: E402
+from gatekeeper.auth.magic_link import router as magic_link_router, init_magic_link_routes, cleanup_expired_magic_links  # noqa: E402
+from gatekeeper.auth.totp import router as totp_router, init_totp_routes  # noqa: E402
+from gatekeeper.auth.sms_otp import router as sms_otp_router, init_sms_otp_routes  # noqa: E402
+from gatekeeper.auth.mfa_picker import router as mfa_picker_router, init_mfa_picker_routes  # noqa: E402
+from gatekeeper.admin.routes import router as admin_router, init_admin_routes  # noqa: E402
+from gatekeeper.middleware.rate_limit import cleanup_old_entries  # noqa: E402
+from gatekeeper.auth.sessions import cleanup_expired_sessions  # noqa: E402
+from gatekeeper.database import get_db  # noqa: E402
 
 
 async def periodic_cleanup():
@@ -67,14 +102,17 @@ async def lifespan(app: FastAPI):
     setup_oauth(config)
 
     cleanup_task = asyncio.create_task(periodic_cleanup())
+    cyclops.app_started(gatekeeper_env=config.environment or "")
 
-    yield
-
-    cleanup_task.cancel()
     try:
-        await cleanup_task
-    except asyncio.CancelledError:
-        pass
+        yield
+    finally:
+        cyclops.app_stopped()
+        cleanup_task.cancel()
+        try:
+            await cleanup_task
+        except asyncio.CancelledError:
+            pass
 
 
 app = FastAPI(title="Gatekeeper", docs_url=None, redoc_url=None, lifespan=lifespan)
@@ -110,18 +148,8 @@ async def health():
 
 @app.get("/_auth/version")
 async def version():
-    import subprocess
-    try:
-        count = subprocess.check_output(
-            ["git", "rev-list", "--count", "HEAD"],
-            cwd=str(Path(__file__).parent.parent),
-            stderr=subprocess.DEVNULL,
-        ).decode().strip()
-        ver = int(count)
-    except Exception:
-        ver = 0
     return {
-        "version": ver,
+        "version": APP_VERSION,
         "running_since": _started_at.isoformat() if _started_at else None,
     }
 
