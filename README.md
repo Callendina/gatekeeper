@@ -106,7 +106,7 @@ Key sections:
 - **`email`** — Resend API config for magic link login
 - **`rate_limit`** — per-IP limits (separate for anonymous vs authenticated)
 - **`server.environment`** — optional label shown in admin UI (e.g. "STAGING")
-- **`server.totp_issuer`** / **`server.system_admin_requires_totp`** — TOTP / MFA settings
+- **`server.totp_issuer`** / **`server.system_admin_requires_mfa`** / **`server.system_admin_mfa_methods`** — MFA settings
 
 ## TOTP / MFA
 

@@ -45,6 +45,10 @@ class UserAppRole(Base):
     role: Mapped[str] = mapped_column(String(50), nullable=False, default="user")
     group: Mapped[str | None] = mapped_column(String(100), nullable=True)
     pending_invite: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Per-(user, app) MFA method binding. NULL = not yet picked, or
+    # single-method app where the choice is implicit. One of: 'totp', 'sms_otp'.
+    # Set on first MFA encounter; admin reset clears it.
+    mfa_method: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     user: Mapped["User"] = relationship(back_populates="app_roles")
 
@@ -82,6 +86,77 @@ class UserTOTP(Base):
     last_counter: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime, default=utcnow
+    )
+
+
+class UserPhone(Base):
+    """Per-user phone number for SMS OTP. Mirrors UserTOTP shape: one row
+    per user, key_num bumped on admin reset to invalidate any in-flight
+    challenges and force re-confirmation of the number.
+
+    The number is a global per-user artefact — the per-(user, app) choice
+    of method (UserAppRole.mfa_method) points at this row when SMS is bound.
+    """
+    __tablename__ = "user_phone"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    # E.164-normalised, e.g. "+61412345678".
+    e164: Mapped[str] = mapped_column(String(20), nullable=False)
+    # Null = enrolment started but confirmation OTP not yet entered.
+    confirmed_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
+    # Bumped on admin reset; included in the HMAC challenge derivation so
+    # bumping invalidates any in-flight pending challenge.
+    key_num: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime, default=utcnow
+    )
+    last_change_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime, default=utcnow
+    )
+
+
+class SmsOtpChallenge(Base):
+    """One row per issued SMS OTP challenge. Codes are never stored in
+    plaintext — only HMAC-SHA256(secret_key, "smsotp-v1|" + id + "|" + code).
+
+    Single-use is enforced by the verify path issuing
+        UPDATE … SET status='consumed' WHERE id=? AND status='pending'
+    and checking rowcount.
+    """
+    __tablename__ = "sms_otp_challenges"
+
+    # UUID4 string. Public-ish (used in the HMAC's domain-separation), but
+    # not transmitted to the user.
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    # App this challenge is bound to. Pseudo-slug "_system" for the
+    # system-admin gate (admin UI, /_term/).
+    app_slug: Mapped[str] = mapped_column(String(100), nullable=False)
+    # Delivery channel. "sms" for now; reserved for future ("voice", etc).
+    channel: Mapped[str] = mapped_column(String(20), nullable=False, default="sms")
+    code_hmac: Mapped[str] = mapped_column(String(64), nullable=False)
+    # HMAC of the destination E.164 number, plus last 4 digits in clear
+    # for "code sent to ••••1234" UI without exposing the full number.
+    target_hmac: Mapped[str] = mapped_column(String(64), nullable=False)
+    target_last4: Mapped[str] = mapped_column(String(4), nullable=False)
+    issued_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime, default=utcnow, index=True
+    )
+    expires_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False)
+    attempts_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # pending | verified | consumed | expired | invalidated
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    # Session token (Session.token) the challenge is bound to. Verification
+    # rejects use from any other session.
+    gk_session_token: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Provider message ID returned on send acceptance. Null until provider acks.
+    provider_message_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Set when the provider webhook reports delivered.
+    delivered_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index("ix_smsotp_user_status", "user_id", "status"),
+        Index("ix_smsotp_session", "gk_session_token"),
     )
 
 

@@ -112,22 +112,31 @@ class InviteConfig:
         return self.mode == "invite_only"
 
 
+_VALID_MFA_METHODS = ("totp", "sms_otp")
+
+
 @dataclass
 class MFAConfig:
-    """Per-app MFA (TOTP) gating.
+    """Per-app MFA gating.
 
     - required_for_roles: any user whose role for this app is in this list
       is forced to enroll on sign-in (eager) and must verify according to
       the step-up cadence on every gated request.
-    - required_for_paths: glob patterns; any matching path triggers TOTP for
+    - required_for_paths: glob patterns; any matching path triggers MFA for
       authenticated users hitting it (lazy enrollment if not yet enrolled).
-    - step_up_minutes / step_up_days: how long a TOTP verification stays
-      valid within a session. 0 (the default) means once-per-session: as
-      long as the session cookie lives and totp_verified_at is set on it,
-      no re-prompt. step_up_minutes takes precedence if both are set > 0.
+    - methods: which MFA methods this app offers. Default ["totp"]. The
+      user picks one at first MFA encounter (per-(user, app) binding); the
+      picker is shown only when len(methods) > 1.
+    - method_change_locked: when True (the MVP default), users cannot
+      change their bound method themselves — admin reset only.
+    - step_up_minutes / step_up_days: how long an MFA verification stays
+      valid within a session. 0 (the default) means once-per-session.
+      step_up_minutes takes precedence if both are set > 0.
     """
     required_for_roles: list[str] = field(default_factory=list)
     required_for_paths: list[str] = field(default_factory=list)
+    methods: list[str] = field(default_factory=lambda: ["totp"])
+    method_change_locked: bool = True
     step_up_minutes: int = 0
     step_up_days: int = 0
 
@@ -166,6 +175,38 @@ class EmailConfig:
 
 
 @dataclass
+class SMSRateLimits:
+    """Layered SMS-OTP send rate limits. All defaults are the design's
+    hobby-tier ceilings; override per deployment."""
+    per_number_hour: int = 5
+    per_number_day: int = 20
+    per_user_hour: int = 10
+    per_ip_hour: int = 10
+    per_app_hour: int = 100
+    global_hour: int = 200
+    global_day: int = 1000
+
+
+@dataclass
+class SMSConfig:
+    """Server-level SMS configuration. Phase-1 readers (no SMS code paths
+    live yet) only need the parser to accept these keys without warning."""
+    provider: str = "fake"            # "fake" | "clicksend"
+    # Country allowlist for destination numbers (E.164 prefix match).
+    # Default ["+61"] — Australia only at MVP. Never broaden to "all".
+    country_allowlist: list[str] = field(default_factory=lambda: ["+61"])
+    sender_id: str = ""               # Alpha sender, ≤11 chars, ≥1 letter.
+    clicksend_username: str = ""
+    clicksend_api_key: str = ""
+    webhook_secret: str = ""          # HMAC secret for ClickSend webhook verify.
+    rate_limits: SMSRateLimits = field(default_factory=SMSRateLimits)
+
+    @property
+    def enabled(self) -> bool:
+        return self.provider in ("fake", "clicksend")
+
+
+@dataclass
 class AppConfig:
     slug: str
     name: str
@@ -200,10 +241,13 @@ class GatekeeperConfig:
     # Issuer name shown in users' authenticator apps (otpauth URI). If
     # `environment` is set, it is appended (e.g. "Gatekeeper - STAGING").
     totp_issuer: str = "Gatekeeper"
-    # When True, system-admin gates (/_auth/admin/*, /_term/) require TOTP
-    # in addition to is_system_admin. Honours each user's existing MFA
-    # enrollment; admins must enroll on first protected access.
-    system_admin_requires_totp: bool = False
+    # When True, system-admin gates (/_auth/admin/*, /_term/) require an
+    # MFA second factor in addition to is_system_admin.
+    system_admin_requires_mfa: bool = False
+    # Methods accepted at the system-admin gate. Per-(user, "_system")
+    # binding picks one at first encounter; default ["totp"] keeps the
+    # gate's posture aligned with NIST guidance for highest-trust paths.
+    system_admin_mfa_methods: list[str] = field(default_factory=lambda: ["totp"])
     database_path: str = "gatekeeper.db"
     google_client_id: str = ""
     google_client_secret: str = ""
@@ -214,6 +258,7 @@ class GatekeeperConfig:
     # If set, all GitHub OAuth flows route through this domain.
     github_callback_domain: str = ""
     email: EmailConfig = field(default_factory=EmailConfig)
+    sms: SMSConfig = field(default_factory=SMSConfig)
     apps: dict[str, AppConfig] = field(default_factory=dict)
 
     def app_for_domain(self, domain: str) -> AppConfig | None:
@@ -288,9 +333,18 @@ def _parse_app_config(slug: str, app_raw: dict) -> AppConfig:
         sent_html_file=ml_raw.get("sent_html_file", ""),
     )
     mfa_raw = app_raw.get("mfa", {}) or {}
+    methods = mfa_raw.get("methods", ["totp"]) or ["totp"]
+    for m in methods:
+        if m not in _VALID_MFA_METHODS:
+            raise ValueError(
+                f"app '{slug}' mfa.methods contains unknown method '{m}'; "
+                f"valid: {list(_VALID_MFA_METHODS)}"
+            )
     mfa = MFAConfig(
         required_for_roles=mfa_raw.get("required_for_roles", []) or [],
         required_for_paths=mfa_raw.get("required_for_paths", []) or [],
+        methods=methods,
+        method_change_locked=mfa_raw.get("method_change_locked", True),
         step_up_minutes=mfa_raw.get("step_up_minutes", 0),
         step_up_days=mfa_raw.get("step_up_days", 0),
     )
@@ -322,6 +376,19 @@ def load_config(path: str = "config.yaml") -> GatekeeperConfig:
         raw = yaml.safe_load(f)
 
     server = raw.get("server", {})
+    if "system_admin_requires_totp" in server:
+        raise ValueError(
+            "config: server.system_admin_requires_totp has been replaced. "
+            "Set server.system_admin_requires_mfa: true and "
+            'server.system_admin_mfa_methods: ["totp"] instead.'
+        )
+    sa_methods = server.get("system_admin_mfa_methods", ["totp"]) or ["totp"]
+    for m in sa_methods:
+        if m not in _VALID_MFA_METHODS:
+            raise ValueError(
+                f"server.system_admin_mfa_methods contains unknown method '{m}'; "
+                f"valid: {list(_VALID_MFA_METHODS)}"
+            )
     db = raw.get("database", {})
     oauth_google = raw.get("oauth", {}).get("google", {})
     oauth_github = raw.get("oauth", {}).get("github", {})
@@ -349,6 +416,26 @@ def load_config(path: str = "config.yaml") -> GatekeeperConfig:
         from_address=email_raw.get("from_address", ""),
     )
 
+    sms_raw = raw.get("sms", {}) or {}
+    sms_rl_raw = sms_raw.get("rate_limits", {}) or {}
+    sms_config = SMSConfig(
+        provider=sms_raw.get("provider", "fake"),
+        country_allowlist=sms_raw.get("country_allowlist", ["+61"]) or ["+61"],
+        sender_id=sms_raw.get("sender_id", ""),
+        clicksend_username=sms_raw.get("clicksend_username", ""),
+        clicksend_api_key=sms_raw.get("clicksend_api_key", ""),
+        webhook_secret=sms_raw.get("webhook_secret", ""),
+        rate_limits=SMSRateLimits(
+            per_number_hour=sms_rl_raw.get("per_number_hour", 5),
+            per_number_day=sms_rl_raw.get("per_number_day", 20),
+            per_user_hour=sms_rl_raw.get("per_user_hour", 10),
+            per_ip_hour=sms_rl_raw.get("per_ip_hour", 10),
+            per_app_hour=sms_rl_raw.get("per_app_hour", 100),
+            global_hour=sms_rl_raw.get("global_hour", 200),
+            global_day=sms_rl_raw.get("global_day", 1000),
+        ),
+    )
+
     config = GatekeeperConfig(
         host=server.get("host", "127.0.0.1"),
         port=server.get("port", 9100),
@@ -357,7 +444,8 @@ def load_config(path: str = "config.yaml") -> GatekeeperConfig:
         terminal_enabled=server.get("terminal_enabled", False),
         corkboard_enabled=server.get("corkboard_enabled", False),
         totp_issuer=server.get("totp_issuer", "Gatekeeper"),
-        system_admin_requires_totp=server.get("system_admin_requires_totp", False),
+        system_admin_requires_mfa=server.get("system_admin_requires_mfa", False),
+        system_admin_mfa_methods=sa_methods,
         database_path=db.get("path", "gatekeeper.db"),
         google_client_id=oauth_google.get("client_id", ""),
         google_client_secret=oauth_google.get("client_secret", ""),
@@ -365,6 +453,7 @@ def load_config(path: str = "config.yaml") -> GatekeeperConfig:
         github_client_secret=oauth_github.get("client_secret", ""),
         github_callback_domain=oauth_github.get("callback_domain", ""),
         email=email_config,
+        sms=sms_config,
         apps=apps,
     )
     if not config.secret_key:

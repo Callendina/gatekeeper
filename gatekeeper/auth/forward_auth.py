@@ -504,9 +504,12 @@ async def verify_system_admin(request: Request, db: AsyncSession = Depends(get_d
         await _log(db, ip, "_system", path, method, user.email, "blocked", **_extra)
         return Response(status_code=403, content="System admin access required")
 
-    # System-admin TOTP gate. We piggy-back on the same /_auth/totp/{enroll,verify}
+    # System-admin MFA gate. We piggy-back on the same /_auth/totp/{enroll,verify}
     # routes used by app-scoped MFA — they look up the session/user themselves.
-    if _config.system_admin_requires_totp:
+    # Phase 1: only TOTP is wired, so the gate fires only when TOTP is among
+    # the accepted methods. Phase 2 will dispatch to the per-(user, "_system")
+    # bound method (TOTP or SMS OTP).
+    if _config.system_admin_requires_mfa and "totp" in _config.system_admin_mfa_methods:
         rec = await get_totp(db, user.id)
         next_q = quote(path or "/")
         if rec is None or rec.confirmed_at is None:

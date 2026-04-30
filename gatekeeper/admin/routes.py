@@ -30,9 +30,12 @@ def init_admin_routes(config: GatekeeperConfig):
 async def _totp_redirect_if_required(
     db: AsyncSession, user: User, session: Session | None, request: Request
 ):
-    """When system_admin_requires_totp is set, redirect to enrol/verify if the
-    admin user hasn't completed TOTP for this session. Returns None if OK."""
-    if not _config.system_admin_requires_totp:
+    """When system_admin_requires_mfa is set and TOTP is among the accepted
+    methods, redirect to enrol/verify if the admin user hasn't completed
+    TOTP for this session. Returns None if OK. Phase 2 will replace this
+    with a per-method dispatcher consulting UserAppRole.mfa_method for
+    app_slug='_system'."""
+    if not (_config.system_admin_requires_mfa and "totp" in _config.system_admin_mfa_methods):
         return None
     from gatekeeper.auth.totp import get_totp
     rec = await get_totp(db, user.id)

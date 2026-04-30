@@ -269,8 +269,18 @@ a configured trigger must clear it.
   Forces *lazy* enrollment — the user is only redirected to enroll the
   first time they hit such a path.
 
-System-admin gates (`/_auth/admin/*` and `/_term/`) are governed by a
-separate server-level `system_admin_requires_totp` flag.
+System-admin gates (`/_auth/admin/*` and `/_term/`) are governed by
+separate server-level `system_admin_requires_mfa` (bool) and
+`system_admin_mfa_methods` (list, default `["totp"]`) flags.
+
+### Method choice (per-(user, app))
+
+Per-app `mfa.methods` (default `["totp"]`) lists the MFA factors an app
+will accept. When >1 method is offered, each user picks one at first MFA
+encounter; the choice is recorded on `UserAppRole.mfa_method` and is
+admin-resettable only (`mfa.method_change_locked: true` at MVP). Today
+the only available method is TOTP — SMS OTP rolls out in subsequent
+phases of the SMS-OTP feature.
 
 ### Step-up cadence
 
@@ -344,12 +354,12 @@ need shell access to the gatekeeper server. Two options:
 
 **Option 1 — disable the gate, re-enroll, re-enable:**
 ```bash
-# 1. Edit config.yaml: set system_admin_requires_totp: false
+# 1. Edit config.yaml: set system_admin_requires_mfa: false
 # 2. Restart so the change takes effect
 sudo systemctl restart gatekeeper
 # 3. Sign in to /_auth/admin in your browser, hit Reset MFA on yourself,
 #    then visit any admin page → redirected to /_auth/totp/enroll
-# 4. Re-edit config.yaml: set system_admin_requires_totp: true
+# 4. Re-edit config.yaml: set system_admin_requires_mfa: true
 sudo systemctl restart gatekeeper
 ```
 
@@ -368,7 +378,8 @@ fresh secret. No restart needed — the secret is derived on each request.
 Layered auth for the web terminal:
 
 1. **Gatekeeper** at the edge — OAuth/magic-link, system-admin flag, and
-   (when `system_admin_requires_totp: true`) gatekeeper TOTP.
+   (when `system_admin_requires_mfa: true` with `"totp"` in
+   `system_admin_mfa_methods`) gatekeeper TOTP.
 2. **sshd** — linux password for `jonnosan` on the localhost handoff.
 
 PAM TOTP (`pam_google_authenticator.so`) is intentionally skipped for

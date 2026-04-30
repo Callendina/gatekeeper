@@ -10,7 +10,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from gatekeeper._time import utcnow
 from gatekeeper.config import load_config
-from gatekeeper.database import init_db
+from gatekeeper.database import init_db, backfill_mfa_method
 from gatekeeper.auth.forward_auth import router as forward_auth_router, init_forward_auth
 from gatekeeper.auth.login import router as login_router, init_login_routes
 from gatekeeper.auth.oauth import setup_oauth
@@ -45,6 +45,7 @@ async def lifespan(app: FastAPI):
     global _started_at
     _started_at = datetime.datetime.now(datetime.timezone.utc)
     await init_db(config.database_path)
+    await backfill_mfa_method(config)
     init_forward_auth(config)
     init_login_routes(config)
     init_admin_routes(config)

@@ -13,7 +13,8 @@ Browser
 Caddy
   │  forward_auth → /_auth/verify-system-admin (gatekeeper)
   │     → 200 only if signed in via OAuth/magic-link AND is_system_admin
-  │     → and (when system_admin_requires_totp: true) gatekeeper TOTP
+  │     → and (when system_admin_requires_mfa: true with totp in
+  │         system_admin_mfa_methods) gatekeeper TOTP
   │  reverse_proxy → 127.0.0.1:7681 (ttyd)
   ▼
 ttyd  (running as 'ttyd' user, no shell, no sudo)
@@ -92,7 +93,8 @@ sudo systemctl reload caddy
 ### 6. (Recommended) Enable PAM TOTP for *external* SSH (optional)
 
 The web terminal already gets a TOTP factor via gatekeeper
-(`system_admin_requires_totp: true`), so PAM TOTP isn't strictly needed
+(`system_admin_requires_mfa: true` with `"totp"` in
+`system_admin_mfa_methods`), so PAM TOTP isn't strictly needed
 for the `/_term/` path. It's still useful as belt-and-braces for direct
 SSH-by-password from outside.
 
@@ -125,9 +127,10 @@ google-authenticator -t -d -f -r 3 -R 30 -W
 1. Sign out of gatekeeper. Visit `https://gatekeeper-staging.callendina.com/_term/`
    → should redirect to login.
 2. Sign in as a non-admin → should get 403 "System admin access required".
-3. Sign in as a system admin → if `system_admin_requires_totp: true` and
-   you're not yet TOTP-verified, redirect to `/_auth/totp/verify`. Enter
-   the gatekeeper TOTP code → ttyd loads with an `ssh` password prompt.
+3. Sign in as a system admin → if `system_admin_requires_mfa: true` (with
+   `"totp"` in `system_admin_mfa_methods`) and you're not yet TOTP-verified,
+   redirect to `/_auth/totp/verify`. Enter the gatekeeper TOTP code → ttyd
+   loads with an `ssh` password prompt.
 4. Enter the linux password → shell as `jonnosan` (no second TOTP, since
    PAM is configured to skip TOTP on the localhost handoff).
 
