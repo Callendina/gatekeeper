@@ -1,5 +1,13 @@
 """Test fixtures for gatekeeper tests."""
 import os
+
+# Cyclops requires these env vars before any `import cyclops`. Tests exercise
+# code paths that emit events, so set them here at module load.
+os.environ.setdefault("APP_NAME", "gatekeeper")
+os.environ.setdefault("ENVIRONMENT", "test")
+os.environ.setdefault("APP_VERSION", "0.0.0-test")
+os.environ.setdefault("CYCLOPS_COMPONENT", "gatekeeper.test")
+
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport

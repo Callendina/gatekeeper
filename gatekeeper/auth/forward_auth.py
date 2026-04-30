@@ -533,3 +533,16 @@ async def _log(
     )
     db.add(log)
     await db.commit()
+
+    import cyclops
+    cyclops.event(
+        "gatekeeper.access",
+        outcome="success" if status == "allowed" else "failure",
+        status=status,
+        app_slug=app_slug,
+        path=path,
+        method=method,
+        masked_email=cyclops.redact_email(user_email) if user_email else "",
+        has_session=session_token is not None,
+        ip=ip,
+    )
