@@ -452,13 +452,31 @@ async def logout(
     db: AsyncSession = Depends(get_db),
 ):
     token = request.cookies.get("gk_session")
+    user_email = ""
     if token:
+        from gatekeeper.models import Session as SessionModel
+        from gatekeeper.models import User
+        session = await db.scalar(
+            select(SessionModel).where(SessionModel.token == token)
+        )
+        if session:
+            user = await db.scalar(select(User).where(User.id == session.user_id))
+            if user:
+                user_email = user.email
         await delete_session(db, token)
 
     app_config = _config.apps.get(app)
     redirect_url = "/"
     if app_config and app_config.domains:
         redirect_url = f"https://{app_config.domains[0]}/"
+
+    import cyclops
+    cyclops.event(
+        "gatekeeper.logout",
+        app_slug=app or "",
+        masked_email=cyclops.redact_email(user_email) if user_email else "",
+        had_session=bool(token),
+    )
 
     response = RedirectResponse(url=redirect_url, status_code=302)
     response.delete_cookie("gk_session")

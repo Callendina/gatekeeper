@@ -132,6 +132,17 @@ async def issue_registered_key(
     db.add(api_key)
     await db.commit()
 
+    import cyclops
+    cyclops.event(
+        "gatekeeper.api_key.issued",
+        outcome="success",
+        app_slug=app.slug,
+        key_type="registered",
+        masked_email=cyclops.redact_email(user.email),
+        masked_key=cyclops.redact_token(key),
+        expires_at=expires_at.isoformat() + "Z",
+    )
+
     return JSONResponse({
         "api_key": key,
         "expires_at": expires_at.isoformat() + "Z",
