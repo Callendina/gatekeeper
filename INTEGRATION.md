@@ -185,7 +185,7 @@ webapp.example.com {
         forward_auth localhost:9100 {
             uri /_auth/verify
             header_up X-Forwarded-API-Key {header.X-API-Key}
-            copy_headers X-Gatekeeper-User X-Gatekeeper-Role X-Gatekeeper-System-Admin
+            copy_headers X-Gatekeeper-User X-Gatekeeper-Role X-Gatekeeper-Group X-Gatekeeper-System-Admin
         }
 
         reverse_proxy localhost:YOUR_APP_PORT
@@ -347,7 +347,7 @@ myapp.example.com {
     handle {
         forward_auth localhost:9100 {
             uri /_auth/verify
-            copy_headers X-Gatekeeper-User X-Gatekeeper-Role X-Gatekeeper-System-Admin
+            copy_headers X-Gatekeeper-User X-Gatekeeper-Role X-Gatekeeper-Group X-Gatekeeper-System-Admin
         }
 
         reverse_proxy localhost:YOUR_APP_PORT
@@ -364,7 +364,7 @@ To enable referrer and user-agent tracking in gatekeeper's analytics dashboard, 
 ```caddyfile
 forward_auth localhost:9100 {
     uri /_auth/verify
-    copy_headers X-Gatekeeper-User X-Gatekeeper-Role X-Gatekeeper-System-Admin
+    copy_headers X-Gatekeeper-User X-Gatekeeper-Role X-Gatekeeper-Group X-Gatekeeper-System-Admin
     header_up X-Forwarded-User-Agent {http.request.header.User-Agent}
     header_up X-Forwarded-Referer {http.request.header.Referer}
 }

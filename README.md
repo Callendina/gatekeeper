@@ -85,7 +85,7 @@ myapp.example.com {
     handle {
         forward_auth localhost:9100 {
             uri /_auth/verify
-            copy_headers X-Gatekeeper-User X-Gatekeeper-Role X-Gatekeeper-System-Admin
+            copy_headers X-Gatekeeper-User X-Gatekeeper-Role X-Gatekeeper-Group X-Gatekeeper-System-Admin
         }
 
         reverse_proxy localhost:8001
