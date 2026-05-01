@@ -17,7 +17,6 @@ server:
   # system_admin_mfa_methods: ["totp"]       # methods accepted at the system-admin gate
   # Admin-UI nav links to system-admin-only tools on the same domain.
   # terminal_enabled: true                  # surface "Terminal" link to /_term/
-  # corkboard_enabled: true                 # surface "Corkboard" link to /corkboard/
 
 database:
   # SQLite database path (relative to working directory)

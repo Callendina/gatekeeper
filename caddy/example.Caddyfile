@@ -87,19 +87,6 @@ gatekeeper-staging.example.com {
 		reverse_proxy localhost:7681
 	}
 
-	# Corkboard — admin-only roadmap/bug/feature tracker for gatekeeper itself.
-	# Same forward_auth as /_term/ since the gatekeeper domain isn't a
-	# registered gatekeeper "app". Corkboard treats X-Gatekeeper-System-Admin
-	# as admin role, so no X-Gatekeeper-Role header is needed.
-	handle /corkboard/* {
-		forward_auth localhost:9100 {
-			uri /_auth/verify-system-admin
-			copy_headers X-Gatekeeper-User X-Gatekeeper-System-Admin
-		}
-
-		reverse_proxy localhost:9200
-	}
-
 	# Everything else is the gatekeeper admin UI itself.
 	handle {
 		reverse_proxy localhost:9100

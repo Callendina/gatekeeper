@@ -481,7 +481,7 @@ that match the sensitive routes.
 
 Gatekeeper emits structured events into `access_log` rather than firing
 emails / pages itself; alert delivery is the future dashboard tool's
-job (see corkboard #1's "Out of scope" deliberations). Event types
+job (see the design doc's "Out of scope" deliberations). Event types
 relevant to operators:
 
 | Status string | When |
