@@ -15,7 +15,18 @@ from gatekeeper.config import load_config
 
 
 # App version: git commit count // 100 (Callendina fleet convention).
+# Inside the docker image, `.git` isn't present and `git` itself is removed
+# during the build's apt purge, so the subprocess call returns 0. Prefer
+# the GATEKEEPER_COMMIT_COUNT env var (set by Dockerfile from a build ARG
+# that deploy.sh wires to `git rev-list --count HEAD`); fall back to the
+# subprocess for local dev outside docker.
 def _gatekeeper_version() -> int:
+    env_count = os.environ.get("GATEKEEPER_COMMIT_COUNT", "").strip()
+    if env_count:
+        try:
+            return int(env_count) // 100
+        except ValueError:
+            pass
     try:
         count = int(subprocess.check_output(
             ["git", "rev-list", "--count", "HEAD"],
@@ -148,8 +159,17 @@ async def health():
 
 @app.get("/_auth/version")
 async def version():
+    # `version` is the //100 form (Callendina fleet convention).
+    # `commit_count` is the raw rev-list count, matching the docker image
+    # tag (vNNN), so operators can tell which exact build is running.
+    raw = os.environ.get("GATEKEEPER_COMMIT_COUNT", "").strip()
+    try:
+        commit_count = int(raw) if raw else None
+    except ValueError:
+        commit_count = None
     return {
         "version": APP_VERSION,
+        "commit_count": commit_count,
         "running_since": _started_at.isoformat() if _started_at else None,
     }
 

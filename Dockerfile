@@ -41,6 +41,13 @@ RUN mkdir -p /app/data \
 
 USER gatekeeper
 
+# Bake the git rev-list count into the image so /_auth/version reports
+# which build is running. `.git` and `git` itself are stripped from the
+# runtime image (see apt purge above), so this ENV is the only source.
+# deploy.sh wires this through; defaults to 0 for ad-hoc local builds.
+ARG GATEKEEPER_COMMIT_COUNT=0
+ENV GATEKEEPER_COMMIT_COUNT=${GATEKEEPER_COMMIT_COUNT}
+
 EXPOSE 9100
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \

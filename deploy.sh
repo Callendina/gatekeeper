@@ -11,7 +11,6 @@ set -euo pipefail
 
 HOST="${1:?Usage: $0 <host> [user]}"
 USER="${2:-jonnosan}"
-REMOTE_DIR="/home/${USER}/gatekeeper"
 
 echo "Deploying gatekeeper to ${USER}@${HOST}..."
 
@@ -20,19 +19,23 @@ if ! ssh -o ConnectTimeout=5 "${USER}@${HOST}" true 2>/dev/null; then
     exit 1
 fi
 
-# Image tag = git commit count, matching /_auth/version semantics.
-IMAGE_TAG="v$(git rev-list --count HEAD)"
-echo "  Image tag: ${IMAGE_TAG}"
-
-ssh "${USER}@${HOST}" bash -s <<EOF
+ssh "${USER}@${HOST}" bash -s <<'EOF'
     set -euo pipefail
-    cd ${REMOTE_DIR}
+    cd "$HOME/gatekeeper"
     echo "  Pulling latest..."
     git pull --ff-only
-    echo "  Building image (${IMAGE_TAG})..."
-    IMAGE_TAG=${IMAGE_TAG} docker compose build
+    # Compute count on the remote *after* pull so it matches what's
+    # actually being built. IMAGE_TAG and GATEKEEPER_COMMIT_COUNT both
+    # derive from the same number — the tag is human-facing, the env
+    # var is baked into the image so /_auth/version reports it.
+    COUNT=$(git rev-list --count HEAD)
+    IMAGE_TAG="v${COUNT}"
+    export GATEKEEPER_COMMIT_COUNT="${COUNT}"
+    export IMAGE_TAG
+    echo "  Building image (${IMAGE_TAG}, commit_count=${COUNT})..."
+    docker compose build
     echo "  Bringing stack up..."
-    IMAGE_TAG=${IMAGE_TAG} docker compose up -d --remove-orphans
+    docker compose up -d --remove-orphans
     echo "  Waiting for health..."
     for i in 1 2 3 4 5 6 7 8 9 10; do
         if curl -sf http://localhost:9100/_auth/health >/dev/null 2>&1; then
