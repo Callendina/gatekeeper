@@ -57,6 +57,29 @@ i.e. the bind-mounted DB. Same for any other absolute paths that
 reference `/home/jonnosan/gatekeeper/...`; they should either be removed
 or rewritten relative to `/app/data/`.
 
+### 2b. Rebind the in-container listener to 0.0.0.0
+
+The bare-metal config has `server.host: "127.0.0.1"` so uvicorn only
+listens on the loopback interface. Inside the container that means
+uvicorn binds to the *container's* loopback, which the host-side
+`docker-proxy` cannot reach (the container's healthcheck still passes
+because it goes through the same loopback). Symptom is `docker compose
+ps` showing the container as `(healthy)` while host curl gets
+`Connection reset by peer` on `:9100`.
+
+In `/srv/gatekeeper/data/config.yaml`, change:
+
+```yaml
+server:
+  host: "127.0.0.1"   # ← change to "0.0.0.0"
+```
+
+This only widens the listener *inside the container's network
+namespace*. Externally, the docker-compose port mapping is still pinned
+to `127.0.0.1:9100:9100`, so the gatekeeper port is host-loopback-only
+as before. Caddy on the host reaches it through the same `localhost:9100`
+forward_auth as the bare-metal version did.
+
 ## 3. Disable the legacy systemd unit
 
 ```bash
