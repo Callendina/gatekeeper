@@ -128,9 +128,15 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Gatekeeper", docs_url=None, redoc_url=None, lifespan=lifespan)
 
-# Trust X-Forwarded-Proto/Host from Caddy so url_for() generates correct URLs
+# Trust X-Forwarded-Proto/Host from Caddy so url_for() generates correct URLs.
+# trusted_hosts="*" because gatekeeper now runs in a Docker container — the
+# peer IP seen by uvicorn is the docker bridge gateway (e.g. 172.22.0.1),
+# not 127.0.0.1, so the previous host-based allowlist rejected Caddy's
+# X-Forwarded-Proto and OAuth redirect_uri came back as http://. Safe
+# because the host port is bound to 127.0.0.1:9100 — only Caddy can reach
+# the container.
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
-app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=["127.0.0.1", "localhost"])
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
 # Session middleware needed for OAuth state
 app.add_middleware(SessionMiddleware, secret_key=config.secret_key)
