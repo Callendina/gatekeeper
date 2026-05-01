@@ -35,6 +35,28 @@ sudo cp -r /home/jonnosan/gatekeeper/config.d   /srv/gatekeeper/data/
 sudo chown -R gatekeeper:gatekeeper /srv/gatekeeper/data
 ```
 
+### 2a. Scrub absolute paths from config.yaml
+
+The bare-metal config commonly has an absolute `database.path` baked in
+(e.g. `/home/jonnosan/gatekeeper/gatekeeper.db`). That path doesn't exist
+inside the container — the symptom is a startup loop with
+`sqlite3.OperationalError: unable to open database file`.
+
+Open `/srv/gatekeeper/data/config.yaml` and **delete the entire
+`database:` block**:
+
+```yaml
+# DELETE THESE TWO LINES:
+database:
+  path: "/home/jonnosan/gatekeeper/gatekeeper.db"
+```
+
+The default (`gatekeeper.db`, relative) resolves inside the container to
+`/app/gatekeeper.db`, which is symlinked to `/app/data/gatekeeper.db` —
+i.e. the bind-mounted DB. Same for any other absolute paths that
+reference `/home/jonnosan/gatekeeper/...`; they should either be removed
+or rewritten relative to `/app/data/`.
+
 ## 3. Disable the legacy systemd unit
 
 ```bash
