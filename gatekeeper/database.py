@@ -23,7 +23,7 @@ async def init_db(database_path: str):
             User, OAuthAccount, Session, IPBlocklist, AnonymousUsage,
             AccessLog, APIKey, InviteCode, InviteUse, InviteWaitlist,
             InviteUserLimit, UserTOTP, UserPhone, SmsOtpChallenge,
-            DebugSmsOutbox, WhatsAppSession,
+            DebugSmsOutbox, WhatsAppSession, WhatsAppPhoneState,
         )
         await conn.run_sync(Base.metadata.create_all)
 

@@ -210,6 +210,9 @@ class SMSConfig:
     #   python -c "import secrets; print(secrets.token_urlsafe(32))"
     webhook_secret: str = ""
     rate_limits: SMSRateLimits = field(default_factory=SMSRateLimits)
+    # Shared WhatsApp WABA sender number ("whatsapp:+61..."). When set, enables
+    # the WhatsApp webhook at /_auth/whatsapp/webhook with multi-app routing.
+    whatsapp_from: str = ""
 
     @property
     def enabled(self) -> bool:
@@ -218,14 +221,13 @@ class SMSConfig:
 
 @dataclass
 class WhatsAppConfig:
-    """Per-app WhatsApp chat integration via Twilio WABA.
+    """Per-app WhatsApp chat integration.
 
-    Uses the same Twilio account/credentials as SMSConfig (configured at
-    server level). Only the WhatsApp-specific sender and target endpoint
-    are per-app.
+    The shared Twilio WABA sender number lives in SMSConfig.whatsapp_from.
+    Each app declares only its chat endpoint and optional default_comp so
+    Gatekeeper knows how to reach it and what to pass through.
     """
-    whatsapp_from: str = ""        # "whatsapp:+61xxxxxxxxx" — Twilio WABA number
-    chat_endpoint: str = ""        # e.g. "http://127.0.0.1:9002/api/chat"
+    chat_endpoint: str = ""        # e.g. "http://host.docker.internal:9002/api/chat"
     default_comp: str | None = None  # passed as default_comp in chat body
 
 
@@ -372,7 +374,6 @@ def _parse_app_config(slug: str, app_raw: dict) -> AppConfig:
     whatsapp = None
     if wa_raw:
         whatsapp = WhatsAppConfig(
-            whatsapp_from=wa_raw.get("whatsapp_from", ""),
             chat_endpoint=wa_raw.get("chat_endpoint", ""),
             default_comp=wa_raw.get("default_comp"),
         )
@@ -466,6 +467,7 @@ def load_config(path: str = "config.yaml") -> GatekeeperConfig:
         twilio_test_account_sid=sms_raw.get("twilio_test_account_sid", ""),
         twilio_test_auth_token=sms_raw.get("twilio_test_auth_token", ""),
         webhook_secret=sms_raw.get("webhook_secret", ""),
+        whatsapp_from=sms_raw.get("whatsapp_from", ""),
         rate_limits=SMSRateLimits(
             per_number_hour=sms_rl_raw.get("per_number_hour", 5),
             per_number_day=sms_rl_raw.get("per_number_day", 20),

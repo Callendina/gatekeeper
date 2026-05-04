@@ -1,8 +1,20 @@
-"""WhatsApp message handler — core business logic.
+"""WhatsApp message handler — multi-app routing.
 
-Resolves phone → user identity, calls the app's chat endpoint, sends
-reply via Twilio. Designed to run as a FastAPI BackgroundTask so the
-webhook can return 200 to Twilio immediately (< 15s requirement).
+A single Twilio WABA number is shared across all apps that declare a
+`whatsapp:` block in their config. Incoming messages are routed to the
+right app by looking up which apps the caller's phone number is enrolled
+in. The routing state (selected app + menu state) is persisted in the
+`whatsapp_phone_state` table.
+
+State machine per phone:
+  0 eligible apps → reply "not registered"
+  1 eligible app  → auto-route (no menu)
+  2+ eligible apps, no selection → send numbered menu, state="selecting"
+  2+ eligible apps, state="selecting" → parse reply (1/2/…), confirm selection
+  2+ eligible apps, app selected → route to selected app
+
+"reset" always clears selection and all conversation_ids, then routes
+to a fresh start.
 """
 import logging
 
@@ -11,7 +23,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from gatekeeper.config import AppConfig, GatekeeperConfig
-from gatekeeper.models import UserAppRole, UserPhone
+from gatekeeper.models import UserAppRole, UserPhone, User
 from gatekeeper.sms.providers import get_provider
 from gatekeeper.whatsapp import formatter, session as wa_session
 
@@ -22,7 +34,6 @@ _RESET_KEYWORDS = {"reset", "new", "start over", "restart"}
 
 async def handle_message(
     *,
-    app_cfg: AppConfig,
     phone: str,
     text: str,
     db: AsyncSession,
@@ -32,31 +43,19 @@ async def handle_message(
     """Process one inbound WhatsApp message. All errors are caught and
     logged — never raised, since we're in a BackgroundTask."""
     try:
-        await _handle(
-            app_cfg=app_cfg, phone=phone, text=text,
-            db=db, http_client=http_client, gk_config=gk_config,
-        )
+        await _handle(phone=phone, text=text, db=db, http_client=http_client, gk_config=gk_config)
     except Exception:
-        logger.exception(
-            "Unhandled error processing WhatsApp message from %s for app %s",
-            phone[-4:], app_cfg.slug,
-        )
+        logger.exception("Unhandled error processing WhatsApp message from %s", phone[-4:])
 
 
 async def _handle(
     *,
-    app_cfg: AppConfig,
     phone: str,
     text: str,
     db: AsyncSession,
     http_client: httpx.AsyncClient,
     gk_config: GatekeeperConfig,
 ) -> None:
-    wa_cfg = app_cfg.whatsapp
-    if wa_cfg is None:
-        logger.warning("handle_message called for app %s with no whatsapp config", app_cfg.slug)
-        return
-
     import cyclops
 
     # Resolve phone → confirmed UserPhone
@@ -68,33 +67,137 @@ async def _handle(
     )
     if user_phone is None:
         cyclops.event("gatekeeper.whatsapp.message", outcome="ignored",
-                      reason="unregistered_phone", app_slug=app_cfg.slug, phone_tail=phone[-4:])
+                      reason="unregistered_phone", phone_tail=phone[-4:])
         return
 
-    # Check role in this app
-    app_role = await db.scalar(
-        select(UserAppRole).where(
-            UserAppRole.user_id == user_phone.user_id,
-            UserAppRole.app_slug == app_cfg.slug,
+    # Find all apps with whatsapp config that this user has a role in
+    wa_app_slugs = [slug for slug, cfg in gk_config.apps.items() if cfg.whatsapp]
+    if not wa_app_slugs:
+        return
+
+    app_roles = {
+        r.app_slug: r
+        for r in await db.scalars(
+            select(UserAppRole).where(
+                UserAppRole.user_id == user_phone.user_id,
+                UserAppRole.app_slug.in_(wa_app_slugs),
+            )
         )
+    }
+    eligible_apps: list[tuple[AppConfig, UserAppRole]] = [
+        (gk_config.apps[slug], role)
+        for slug, role in app_roles.items()
+    ]
+
+    cyclops.event(
+        "gatekeeper.whatsapp.message",
+        outcome="received",
+        phone_tail=phone[-4:],
+        eligible_app_count=len(eligible_apps),
     )
-    if app_role is None:
-        cyclops.event("gatekeeper.whatsapp.message", outcome="ignored",
-                      reason="no_role", app_slug=app_cfg.slug, phone_tail=phone[-4:])
+
+    # Reset command — clears everything regardless of state
+    if text.strip().lower() in _RESET_KEYWORDS:
+        await wa_session.clear_phone_state(db, phone, [cfg.slug for cfg, _ in eligible_apps])
+        cyclops.event("gatekeeper.whatsapp.message", outcome="reset", phone_tail=phone[-4:])
+        await _send(gk_config=gk_config, to=phone, text="Starting a new conversation.",
+                    http_client=http_client)
         return
 
-    # Reset command
-    if text.strip().lower() in _RESET_KEYWORDS:
-        await wa_session.clear_session(db, phone, app_cfg.slug)
-        cyclops.event("gatekeeper.whatsapp.message", outcome="reset",
-                      app_slug=app_cfg.slug, phone_tail=phone[-4:])
-        await _send_whatsapp(
-            gk_config=gk_config, app_cfg=app_cfg, to=phone,
-            text="Starting a new conversation.", http_client=http_client,
+    # 0 eligible apps
+    if not eligible_apps:
+        cyclops.event("gatekeeper.whatsapp.message", outcome="ignored",
+                      reason="no_eligible_apps", phone_tail=phone[-4:])
+        await _send(
+            gk_config=gk_config, to=phone, http_client=http_client,
+            text="Your phone number isn't registered for any apps. Please contact your administrator.",
         )
         return
 
-    # Build chat request
+    # 1 eligible app — auto-route, no menu
+    if len(eligible_apps) == 1:
+        app_cfg, app_role = eligible_apps[0]
+        # Ensure selection is recorded (idempotent)
+        selected_slug, _ = await wa_session.get_phone_state(db, phone)
+        if selected_slug != app_cfg.slug:
+            await wa_session.set_phone_state(db, phone, selected_app_slug=app_cfg.slug, state=None)
+        await _chat(
+            app_cfg=app_cfg, app_role=app_role, phone=phone, text=text,
+            user_phone=user_phone, db=db, http_client=http_client, gk_config=gk_config,
+        )
+        return
+
+    # 2+ eligible apps — check routing state
+    selected_slug, state = await wa_session.get_phone_state(db, phone)
+
+    if state == "selecting":
+        # User is replying to the app-selection menu
+        choice = text.strip()
+        if choice.isdigit() and 1 <= int(choice) <= len(eligible_apps):
+            app_cfg, app_role = eligible_apps[int(choice) - 1]
+            await wa_session.set_phone_state(db, phone, selected_app_slug=app_cfg.slug, state=None)
+            cyclops.event("gatekeeper.whatsapp.app_selected",
+                          phone_tail=phone[-4:], app_slug=app_cfg.slug)
+            await _send(
+                gk_config=gk_config, to=phone, http_client=http_client,
+                text=f"Connected to {app_cfg.name}. How can I help?",
+            )
+        else:
+            # Invalid input — re-send menu
+            await _send_menu(gk_config=gk_config, to=phone,
+                             apps=eligible_apps, http_client=http_client)
+        return
+
+    if selected_slug:
+        # User has a previously selected app — look it up
+        app_cfg_role = next(
+            ((cfg, role) for cfg, role in eligible_apps if cfg.slug == selected_slug),
+            None,
+        )
+        if app_cfg_role:
+            app_cfg, app_role = app_cfg_role
+            await _chat(
+                app_cfg=app_cfg, app_role=app_role, phone=phone, text=text,
+                user_phone=user_phone, db=db, http_client=http_client, gk_config=gk_config,
+            )
+            return
+        # Previously selected app no longer available — fall through to menu
+
+    # No selection yet (or stale selection) — send menu
+    await wa_session.set_phone_state(db, phone, selected_app_slug=None, state="selecting")
+    await _send_menu(gk_config=gk_config, to=phone, apps=eligible_apps, http_client=http_client)
+
+
+async def _send_menu(
+    *,
+    gk_config: GatekeeperConfig,
+    to: str,
+    apps: list[tuple[AppConfig, UserAppRole]],
+    http_client: httpx.AsyncClient,
+) -> None:
+    lines = ["You have access to multiple apps. Reply with a number to choose:"]
+    for i, (app_cfg, _) in enumerate(apps, 1):
+        lines.append(f"{i}. {app_cfg.name}")
+    await _send(gk_config=gk_config, to=to, text="\n".join(lines), http_client=http_client)
+
+
+async def _chat(
+    *,
+    app_cfg: AppConfig,
+    app_role: UserAppRole,
+    phone: str,
+    text: str,
+    user_phone: UserPhone,
+    db: AsyncSession,
+    http_client: httpx.AsyncClient,
+    gk_config: GatekeeperConfig,
+) -> None:
+    """Route a message to the app's chat endpoint and send the reply."""
+    import cyclops
+
+    wa_cfg = app_cfg.whatsapp
+
+    # Build chat request body
     conv_id = await wa_session.get_conversation_id(db, phone, app_cfg.slug)
     body: dict = {"message": text}
     if wa_cfg.default_comp:
@@ -102,9 +205,7 @@ async def _handle(
     if conv_id is not None:
         body["conversation_id"] = conv_id
 
-    # Resolve identity for X-Gatekeeper-* headers.
-    # email may be None for phone-only users — fall back to redacted phone.
-    from gatekeeper.models import User
+    # Resolve user identity for X-Gatekeeper-* headers
     user = await db.scalar(select(User).where(User.id == user_phone.user_id))
     user_header = user.email if (user and user.email) else f"phone:{phone[-4:]}"
 
@@ -128,10 +229,9 @@ async def _handle(
         logger.exception("Chat endpoint error for app %s", app_cfg.slug)
         cyclops.event("gatekeeper.whatsapp.chat_error", app_slug=app_cfg.slug,
                       phone_tail=phone[-4:], endpoint=wa_cfg.chat_endpoint)
-        await _send_whatsapp(
-            gk_config=gk_config, app_cfg=app_cfg, to=phone,
+        await _send(
+            gk_config=gk_config, to=phone, http_client=http_client,
             text="Sorry, I couldn't reach the chat service right now. Please try again.",
-            http_client=http_client,
         )
         return
 
@@ -145,30 +245,24 @@ async def _handle(
     cyclops.event("gatekeeper.whatsapp.reply_sent", app_slug=app_cfg.slug,
                   phone_tail=phone[-4:], reply_chars=len(reply_text))
 
-    await _send_whatsapp(
-        gk_config=gk_config, app_cfg=app_cfg, to=phone,
-        text=reply_text, http_client=http_client,
-    )
+    await _send(gk_config=gk_config, to=phone, text=reply_text, http_client=http_client)
 
 
-async def _send_whatsapp(
+async def _send(
     *,
     gk_config: GatekeeperConfig,
-    app_cfg: AppConfig,
     to: str,
     text: str,
     http_client: httpx.AsyncClient,
 ) -> None:
-    """Send a WhatsApp reply via Twilio using the app's whatsapp_from number."""
-    wa_cfg = app_cfg.whatsapp
-    if wa_cfg is None or not wa_cfg.whatsapp_from:
-        logger.warning("No whatsapp_from configured for app %s", app_cfg.slug)
+    """Send a WhatsApp reply via Twilio using the server-level WABA number."""
+    whatsapp_from = gk_config.sms.whatsapp_from
+    if not whatsapp_from:
+        logger.warning("No sms.whatsapp_from configured — cannot send WhatsApp reply")
         return
 
     provider = get_provider(gk_config.sms)
-    # Pass a fake DB session — FakeSmsProvider writes to DB, but TwilioProvider
-    # doesn't use db in send(). WhatsApp path always uses Twilio in production.
-    # We use a null-object pattern: db is not needed for Twilio sends.
+
     class _NullDb:
         def add(self, _): pass
         async def commit(self): pass
@@ -176,14 +270,14 @@ async def _send_whatsapp(
     result = await provider.send(
         to_e164=to,
         body=text,
-        idempotency_key=f"wa-{app_cfg.slug}-{to}",
+        idempotency_key=f"wa-{to}-{hash(text) & 0xFFFFFF}",
         db=_NullDb(),
-        from_override=wa_cfg.whatsapp_from,
+        from_override=whatsapp_from,
     )
     import cyclops
     cyclops.event(
         "gatekeeper.whatsapp.twilio_send",
-        app_slug=app_cfg.slug, phone_tail=to[-4:],
+        phone_tail=to[-4:],
         accepted=result.accepted,
         message_id=result.provider_message_id,
         error_category=result.error_category,
@@ -192,6 +286,6 @@ async def _send_whatsapp(
     )
     if not result.accepted:
         logger.warning(
-            "WhatsApp send failed for app %s to %s: %s (%s)",
-            app_cfg.slug, to[-4:], result.error_message, result.error_category,
+            "WhatsApp send failed to %s: %s (%s)",
+            to[-4:], result.error_message, result.error_category,
         )

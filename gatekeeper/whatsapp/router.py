@@ -1,22 +1,24 @@
 """WhatsApp webhook router.
 
 Incoming WhatsApp messages arrive from Twilio as form-encoded POSTs.
-The app config is resolved from the Host header — each app registers
-its domain in Gatekeeper's config, and Twilio is pointed at that
-domain's `/_auth/whatsapp/webhook` URL.
+A single WABA sender number is shared across all apps; the handler
+resolves which app to route to by looking up the caller's phone number
+against user_app_roles for all apps that have a `whatsapp:` config block.
 
 Twilio signs each request with X-Twilio-Signature (HMAC-SHA1). We
-verify this signature using the app-level Twilio auth token from
-SMSConfig. The webhook URL path has no embedded secret (unlike the SMS
-OTP delivery webhook) — the Twilio signature is the auth mechanism.
+verify this using the server-level Twilio auth token from SMSConfig.
 
 Flow:
-  1. POST arrives from Twilio (user sent WhatsApp message to our number).
+  1. POST arrives from Twilio.
   2. Validate X-Twilio-Signature (constant-time).
   3. Return 200 immediately (Twilio requires < 15s response).
   4. Dispatch handle_message() as a FastAPI BackgroundTask.
-     handle_message resolves user identity, calls the app's chat
+     handle_message resolves user identity + app, calls the chat
      endpoint, and sends the reply via Twilio.
+
+The webhook endpoint is enabled when `sms.whatsapp_from` is set in
+server config. The webhook URL can be any domain that Caddy routes to
+this Gatekeeper instance.
 """
 import logging
 
@@ -46,10 +48,8 @@ async def whatsapp_webhook(
     background_tasks: BackgroundTasks,
 ):
     """Receive an inbound WhatsApp message from Twilio."""
-    host = (request.headers.get("x-forwarded-host") or request.headers.get("host", "")).split(":")[0]
-    app_cfg = _config.app_for_domain(host)
-    if app_cfg is None or app_cfg.whatsapp is None:
-        # No WhatsApp config for this domain — accept silently.
+    # Shared WhatsApp is only active when whatsapp_from is configured server-side.
+    if not _config.sms.whatsapp_from:
         return PlainTextResponse("OK")
 
     # Signature verification
@@ -64,8 +64,8 @@ async def whatsapp_webhook(
         params = {k: v for k, v in form.items()}
         if not verify_twilio_signature(_config.sms.twilio_auth_token, sig, url, params):
             import cyclops
-            cyclops.event("gatekeeper.whatsapp.signature_failed", app_slug=app_cfg.slug, url=url)
-            logger.warning("Invalid X-Twilio-Signature on WhatsApp webhook (app %s)", app_cfg.slug)
+            cyclops.event("gatekeeper.whatsapp.signature_failed", url=url)
+            logger.warning("Invalid X-Twilio-Signature on WhatsApp webhook (url %s)", url)
             return PlainTextResponse("Forbidden", status_code=403)
     else:
         form = await request.form()
@@ -86,7 +86,6 @@ async def whatsapp_webhook(
     async def _task():
         async with async_session_factory() as db:
             await handle_message(
-                app_cfg=app_cfg,
                 phone=phone,
                 text=text,
                 db=db,

@@ -189,6 +189,27 @@ class WhatsAppSession(Base):
     )
 
 
+class WhatsAppPhoneState(Base):
+    """Routing state for a phone number across the shared WhatsApp number.
+
+    One row per phone. Tracks which app the user is currently chatting with
+    and whether they're in the middle of an app-selection menu.
+
+    selected_app_slug = NULL means the user hasn't selected an app yet (shown
+    a menu on next message if 2+ eligible apps; auto-routed if exactly 1).
+    state = "selecting" means we sent a numbered menu and are awaiting a reply.
+    """
+    __tablename__ = "whatsapp_phone_state"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    phone_e164: Mapped[str] = mapped_column(String(20), nullable=False, unique=True)
+    selected_app_slug: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    state: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime, default=utcnow, onupdate=utcnow
+    )
+
+
 class DebugSmsOutbox(Base):
     """Receives plaintext sends from FakeSmsProvider so dev/test can inspect
     codes without parsing logs. Never written to in production. Retention
