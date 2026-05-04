@@ -25,6 +25,9 @@ services:
     restart: unless-stopped
     ports:
       - "127.0.0.1:9100:9100"
+    env_file:
+      - path: /srv/gatekeeper/data/.env
+        required: false   # missing on first boot before set-secret runs
     volumes:
       - /srv/gatekeeper/data:/app/data
     # Route container stdout into journald so the host-side Alloy (in
