@@ -49,6 +49,11 @@ class UserAppRole(Base):
     # single-method app where the choice is implicit. One of: 'totp', 'sms_otp'.
     # Set on first MFA encounter; admin reset clears it.
     mfa_method: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # Per-(user, app) override of the WhatsApp chat endpoint. When set,
+    # WhatsApp messages from this user to this app are dispatched here
+    # instead of the app-level wa_cfg.chat_endpoint — useful for routing
+    # one tester's traffic at a staging build of a chat backend.
+    chat_endpoint_override: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     user: Mapped["User"] = relationship(back_populates="app_roles")
 

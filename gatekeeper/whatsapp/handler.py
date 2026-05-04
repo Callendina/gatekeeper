@@ -197,6 +197,11 @@ async def _chat(
 
     wa_cfg = app_cfg.whatsapp
 
+    # Per-(user, app) override lets a tester point one user at a staging
+    # chat backend without redeploying the app. See issue #14.
+    endpoint = app_role.chat_endpoint_override or wa_cfg.chat_endpoint
+    override_active = bool(app_role.chat_endpoint_override)
+
     # Build chat request body
     conv_id = await wa_session.get_conversation_id(db, phone, app_cfg.slug)
     body: dict = {"message": text}
@@ -217,18 +222,20 @@ async def _chat(
 
     cyclops.event("gatekeeper.whatsapp.message", outcome="dispatched",
                   app_slug=app_cfg.slug, phone_tail=phone[-4:],
-                  has_conversation=conv_id is not None)
+                  has_conversation=conv_id is not None,
+                  endpoint=endpoint, endpoint_override=override_active)
 
     try:
         resp = await http_client.post(
-            wa_cfg.chat_endpoint, json=body, headers=headers, timeout=120.0,
+            endpoint, json=body, headers=headers, timeout=120.0,
         )
         resp.raise_for_status()
         data = resp.json()
     except Exception:
         logger.exception("Chat endpoint error for app %s", app_cfg.slug)
         cyclops.event("gatekeeper.whatsapp.chat_error", app_slug=app_cfg.slug,
-                      phone_tail=phone[-4:], endpoint=wa_cfg.chat_endpoint)
+                      phone_tail=phone[-4:], endpoint=endpoint,
+                      endpoint_override=override_active)
         await _send(
             gk_config=gk_config, to=phone, http_client=http_client,
             text="Sorry, I couldn't reach the chat service right now. Please try again.",
@@ -241,9 +248,12 @@ async def _chat(
 
     reply_md = data.get("response") or ""
     reply_text = formatter.to_whatsapp(reply_md) if reply_md else "(no response)"
+    if override_active:
+        reply_text = f"[staging] {reply_text}"
 
     cyclops.event("gatekeeper.whatsapp.reply_sent", app_slug=app_cfg.slug,
-                  phone_tail=phone[-4:], reply_chars=len(reply_text))
+                  phone_tail=phone[-4:], reply_chars=len(reply_text),
+                  endpoint_override=override_active)
 
     await _send(gk_config=gk_config, to=phone, text=reply_text, http_client=http_client)
 

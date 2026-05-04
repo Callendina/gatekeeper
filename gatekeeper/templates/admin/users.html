@@ -119,7 +119,7 @@
                                     </form>
                                 </span><br>
                             {% else %}
-                                <span>{{ role.app_slug }}: <strong>{{ role.role }}</strong>{% if role.group %} <span style="color:#666;">/ {{ role.group }}</span>{% endif %}{% if role.mfa_method %} <span style="color:#888;font-size:0.75rem;">[{{ role.mfa_method }}]</span>{% endif %}</span><br>
+                                <span>{{ role.app_slug }}: <strong>{{ role.role }}</strong>{% if role.group %} <span style="color:#666;">/ {{ role.group }}</span>{% endif %}{% if role.mfa_method %} <span style="color:#888;font-size:0.75rem;">[{{ role.mfa_method }}]</span>{% endif %}{% if role.chat_endpoint_override %} <span style="color:#c0392b;font-size:0.75rem;" title="WhatsApp messages route to {{ role.chat_endpoint_override }}">[chat→staging]</span>{% endif %}</span><br>
                             {% endif %}
                         {% endfor %}
                         {% for slug, app_cfg in apps.items() %}
@@ -132,6 +132,9 @@
                                 {% endfor %}
                             </select>
                             <input type="text" name="group" placeholder="group (e.g. CLUB.PEN)" value="{{ cur.group if cur and cur.group else '' }}" style="font-size:0.85rem;width:11rem;">
+                            {% if app_cfg.whatsapp %}
+                            <input type="text" name="chat_endpoint_override" placeholder="chat endpoint override (staging only)" value="{{ cur.chat_endpoint_override if cur and cur.chat_endpoint_override else '' }}" style="font-size:0.85rem;width:18rem;">
+                            {% endif %}
                             <button type="submit">Set</button>
                         </form>
                         {% endfor %}

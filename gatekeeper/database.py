@@ -38,6 +38,8 @@ async def init_db(database_path: str):
         await _add_column_if_missing(conn, "sessions", "totp_verified_at", "DATETIME")
         # Phase 1 of SMS-OTP: per-(user, app) MFA method binding.
         await _add_column_if_missing(conn, "user_app_roles", "mfa_method", "VARCHAR(20)")
+        # Issue #14: per-(user, app) WhatsApp chat endpoint override.
+        await _add_column_if_missing(conn, "user_app_roles", "chat_endpoint_override", "VARCHAR(500)")
 
 
 async def _add_column_if_missing(conn, table: str, column: str, col_type: str):
