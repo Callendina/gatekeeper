@@ -265,7 +265,7 @@ async def update_user_role(
     app_slug: str = Form(...),
     role: str = Form(...),
     group: str = Form(""),
-    chat_endpoint_override: str = Form(""),
+    redirect_to_staging: str = Form(""),
     db: AsyncSession = Depends(get_db),
 ):
     admin, redirect = _check_admin(await _require_admin(request, db))
@@ -293,15 +293,16 @@ async def update_user_role(
     # current values, so a blank group on submit is an explicit clear (rather
     # than "keep existing"). Always use the submitted value verbatim.
     group_value = group.strip() or None
-    override_value = chat_endpoint_override.strip() or None
+    # Checkbox: present (any non-empty value) = True, absent = False.
+    staging_flag = bool(redirect_to_staging)
     if app_role:
         app_role.role = role
         app_role.group = group_value
-        app_role.chat_endpoint_override = override_value
+        app_role.redirect_to_staging = staging_flag
     else:
         app_role = UserAppRole(
             user_id=user_id, app_slug=app_slug, role=role,
-            group=group_value, chat_endpoint_override=override_value,
+            group=group_value, redirect_to_staging=staging_flag,
         )
         db.add(app_role)
 

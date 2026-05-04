@@ -229,6 +229,10 @@ class WhatsAppConfig:
     """
     chat_endpoint: str = ""        # e.g. "http://host.docker.internal:9002/api/chat"
     default_comp: str | None = None  # passed as default_comp in chat body
+    # Optional staging URL. When set, admins can flip individual
+    # (user, app) rows to redirect_to_staging=true and route only that
+    # user's traffic at this endpoint. Leave empty to disable the toggle.
+    chat_endpoint_staging: str = ""
 
 
 @dataclass
@@ -376,6 +380,7 @@ def _parse_app_config(slug: str, app_raw: dict) -> AppConfig:
         whatsapp = WhatsAppConfig(
             chat_endpoint=wa_raw.get("chat_endpoint", ""),
             default_comp=wa_raw.get("default_comp"),
+            chat_endpoint_staging=wa_raw.get("chat_endpoint_staging", ""),
         )
     return AppConfig(
         slug=slug,
