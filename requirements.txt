@@ -12,3 +12,4 @@ pyotp>=2.9.0
 segno>=1.6.0
 phonenumbers>=8.13.0
 cyclops @ git+https://github.com/Callendina/cyclops.git@main#subdirectory=packages/cyclops
+skeletor @ git+https://github.com/Callendina/skeletor.git@main
