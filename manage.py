@@ -221,6 +221,61 @@ def cmd_status(env: str) -> None:
     _run(_host(env), f"cd {REPO_DIR} && docker compose ps")
 
 
+def cmd_admin_reset_totp(env: str, email: str) -> None:
+    """Bump key_num + clear confirmed_at for the named user's TOTP row.
+
+    Use this when GK_SECRET_KEY has been rotated (which invalidates the
+    derived per-user TOTP secrets — every existing enrollment yields a
+    different secret than what's in the user's authenticator). After
+    reset, the user re-enrolls on next protected access (new QR code).
+
+    Runs inside the gatekeeper container via `docker compose exec`, so
+    the script uses the same ORM the running app uses — no separate
+    sqlite3 surface and no risk of schema drift.
+    """
+    import shlex
+    host = _host(env)
+    script = textwrap.dedent(f"""\
+        import asyncio
+        from sqlalchemy import select
+        from gatekeeper import database  # rebind read at call time
+        from gatekeeper.config import load_config
+        from gatekeeper.models import User, UserTOTP, UserAppRole
+
+        async def main():
+            cfg = load_config()
+            await database.init_db(cfg.database_path)
+            async with database.async_session_factory() as s:
+                user = await s.scalar(select(User).where(User.email == {email!r}))
+                if user is None:
+                    raise SystemExit(f"no user with email={email!r}")
+                rec = await s.scalar(select(UserTOTP).where(UserTOTP.user_id == user.id))
+                if rec is None:
+                    print(f"no TOTP enrollment to reset for {email!r}")
+                    return
+                old_key_num = rec.key_num
+                rec.key_num += 1
+                rec.confirmed_at = None
+                rec.last_counter = 0
+                # Also clear per-(user, app) mfa_method bindings so the
+                # picker re-runs and the user can re-enroll cleanly.
+                rows = (await s.execute(
+                    select(UserAppRole).where(UserAppRole.user_id == user.id)
+                )).scalars().all()
+                for r in rows:
+                    r.mfa_method = None
+                await s.commit()
+                print(f"reset TOTP for {{user.email}} (key_num {{old_key_num}} -> {{rec.key_num}})")
+
+        asyncio.run(main())
+        """)
+    cmd = (
+        f"cd {REPO_DIR} && "
+        f"docker compose exec -T gatekeeper python -c {shlex.quote(script)}"
+    )
+    _run(host, cmd)
+
+
 def cmd_logs(env: str, service: str | None) -> None:
     svc = service or ""
     _run(_host(env), f"cd {REPO_DIR} && docker compose logs -f --tail=200 {svc}")
@@ -265,6 +320,15 @@ def main() -> None:
     p.add_argument("dst", choices=list(ENV_HOSTS), help="Destination environment")
     p.add_argument("key", metavar="KEY", help="Environment variable name to copy")
 
+    admin_p = sub.add_parser("admin", help="Operator helpers")
+    admin_sub = admin_p.add_subparsers(dest="admin_cmd", required=True)
+    p = admin_sub.add_parser(
+        "reset-totp",
+        help="Force re-enrollment for one user (after a GK_SECRET_KEY rotation)"
+    )
+    p.add_argument("--env", default="prod", choices=list(ENV_HOSTS))
+    p.add_argument("email", help="Target user's email")
+
     p = sub.add_parser("status", help="docker compose ps")
     p.add_argument("--env", default="prod", choices=list(ENV_HOSTS))
 
@@ -285,6 +349,9 @@ def main() -> None:
         cmd_generate_secret(args.env, args.key, args.bytes_n)
     elif args.cmd == "copy-secret":
         cmd_copy_secret(args.src, args.dst, args.key)
+    elif args.cmd == "admin":
+        if args.admin_cmd == "reset-totp":
+            cmd_admin_reset_totp(args.env, args.email)
     elif args.cmd == "status":
         cmd_status(args.env)
     elif args.cmd == "logs":
