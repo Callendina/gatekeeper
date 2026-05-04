@@ -180,6 +180,16 @@ async def _send_whatsapp(
         db=_NullDb(),
         from_override=wa_cfg.whatsapp_from,
     )
+    import cyclops
+    cyclops.event(
+        "gatekeeper.whatsapp.twilio_send",
+        app_slug=app_cfg.slug, phone_tail=to[-4:],
+        accepted=result.accepted,
+        message_id=result.provider_message_id,
+        error_category=result.error_category,
+        error_message=result.error_message,
+        raw_response=result.raw_response,
+    )
     if not result.accepted:
         logger.warning(
             "WhatsApp send failed for app %s to %s: %s (%s)",
