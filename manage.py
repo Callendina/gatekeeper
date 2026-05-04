@@ -13,16 +13,20 @@ piped over SSH stdin, never on a command line. Requires NOPASSWD sudo on the hos
 """
 import argparse
 import getpass
+import os
 import sys
 import textwrap
 
+from jinja2 import Environment, FileSystemLoader
 from skeletor import ssh, secrets
 from skeletor.ssh import SSHError
+
+_DEPLOY_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "deploy")
 
 
 ENV_HOSTS = {
     "prod":    "scout.callendina.com",
-    "staging": "linode.callendina.com",
+    "staging": "staging.callendina.com",
 }
 SSH_USER = "jonnosan"
 REPO_DIR = "/home/jonnosan/gatekeeper"
@@ -107,17 +111,30 @@ def cmd_provision(env: str) -> None:
         echo '       python manage.py set-secret {env} TWILIO_ACCOUNT_SID'
         echo '       python manage.py set-secret {env} TWILIO_AUTH_TOKEN'
         echo '       python manage.py set-secret {env} TWILIO_WEBHOOK_SECRET'
-        echo '  2. Place config.yaml and config.d/ at {REPO_DIR}/  (managed by skeletor)'
-        echo '  3. python manage.py deploy --env={env}'
+        echo '  2. python manage.py deploy --env={env}'
     """)
     _run(host, script)
 
 
 # ─── deploy ───────────────────────────────────────────────────────────────────
 
+def _deploy_server_config(host: str, env: str) -> None:
+    """Render deploy/server.yaml.j2 and upload to /srv/gatekeeper/data/config.yaml."""
+    j2 = Environment(loader=FileSystemLoader(_DEPLOY_DIR), keep_trailing_newline=True)
+    rendered = j2.get_template("server.yaml.j2").render(env=env)
+    print(f"# Deploying server config → {DATA_DIR}/config.yaml", flush=True)
+    cmd = (
+        f"sudo tee {DATA_DIR}/config.yaml > /dev/null"
+        f" && sudo chown gatekeeper:gatekeeper {DATA_DIR}/config.yaml"
+        f" && sudo chmod 0640 {DATA_DIR}/config.yaml"
+    )
+    ssh.run(host, cmd, user=SSH_USER, stdin=rendered)
+
+
 def cmd_deploy(env: str) -> None:
-    """git pull + docker compose build + up -d."""
+    """Render + upload server config, then git pull + docker compose build + up -d."""
     host = _host(env)
+    _deploy_server_config(host, env)
     script = textwrap.dedent(f"""\
         set -e
         cd {REPO_DIR}

@@ -1,0 +1,82 @@
+{# Gatekeeper server-level config.yaml template.
+   Rendered to /srv/gatekeeper/data/config.yaml on each host by:
+     python manage.py deploy --env=<env>
+
+   All secrets are referenced as ${VAR} — resolved at Gatekeeper startup
+   via os.environ (populated from /srv/gatekeeper/data/.env by docker
+   compose env_file:). Non-secret values are inlined.
+
+   Set secrets before first deploy:
+     python manage.py set-secret <env> GK_SECRET_KEY
+     python manage.py set-secret <env> RESEND_API_KEY
+     python manage.py set-secret <env> GOOGLE_CLIENT_SECRET
+     python manage.py set-secret <env> GITHUB_CLIENT_SECRET
+     python manage.py set-secret <env> TWILIO_ACCOUNT_SID
+     python manage.py set-secret <env> TWILIO_AUTH_TOKEN
+#}
+# Gatekeeper server config ({{ env }}).
+# Managed by gatekeeper repo — edit deploy/server.yaml.j2, then:
+#   python manage.py deploy --env={{ env }}
+
+server:
+  host: "0.0.0.0"
+  port: 9100
+  secret_key: "${GK_SECRET_KEY}"
+  environment: "{{ env | upper }}"
+{% if env == "staging" %}
+  terminal_enabled: true
+{% endif %}
+  system_admin_requires_mfa: true
+  system_admin_mfa_methods: ["totp"]
+
+email:
+  provider: "resend"
+  api_key: "${RESEND_API_KEY}"
+  from_address: "noreply@callendina.com"
+
+oauth:
+  google:
+    client_id: "520026728140-lmfd0cpiv21j8789vn4dr4t7h2e72169.apps.googleusercontent.com"
+    client_secret: "${GOOGLE_CLIENT_SECRET}"
+  github:
+    client_id: "Ov23linFwKnvJSOX8Z6B"
+    client_secret: "${GITHUB_CLIENT_SECRET}"
+{% if env == "staging" %}
+    callback_domain: "gatekeeper-staging.callendina.com"
+{% else %}
+    callback_domain: "gatekeeper.callendina.com"
+{% endif %}
+
+sms:
+  provider: "twilio"
+  twilio_from: "+61485062805"
+  twilio_account_sid: "${TWILIO_ACCOUNT_SID}"
+  twilio_auth_token: "${TWILIO_AUTH_TOKEN}"
+  country_allowlist: ["+61"]
+
+apps:
+  gatekeeper:
+{% if env == "staging" %}
+    name: "Gatekeeper Admin (Staging)"
+{% else %}
+    name: "Gatekeeper Admin"
+{% endif %}
+    domains:
+{% if env == "staging" %}
+      - "gatekeeper-staging.callendina.com"
+{% else %}
+      - "gatekeeper.callendina.com"
+{% endif %}
+    protected_paths:
+      - "/*"
+    allowed_emails:
+      - "jonno.downes@callendina.com"
+      - "jonnosan@gmail.com"
+      - "jonno@callendina.com"
+    roles:
+      - "admin"
+    default_role: "admin"
+    api_access:
+      mode: "key_required"
+      paths:
+      registered_key_duration_days: 1825
