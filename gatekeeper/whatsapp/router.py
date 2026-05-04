@@ -63,6 +63,8 @@ async def whatsapp_webhook(
         form = await request.form()
         params = {k: v for k, v in form.items()}
         if not verify_twilio_signature(_config.sms.twilio_auth_token, sig, url, params):
+            import cyclops
+            cyclops.event("gatekeeper.whatsapp.signature_failed", app_slug=app_cfg.slug, url=url)
             logger.warning("Invalid X-Twilio-Signature on WhatsApp webhook (app %s)", app_cfg.slug)
             return PlainTextResponse("Forbidden", status_code=403)
     else:

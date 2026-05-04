@@ -57,6 +57,8 @@ async def _handle(
         logger.warning("handle_message called for app %s with no whatsapp config", app_cfg.slug)
         return
 
+    import cyclops
+
     # Resolve phone → confirmed UserPhone
     user_phone = await db.scalar(
         select(UserPhone).where(
@@ -65,7 +67,8 @@ async def _handle(
         )
     )
     if user_phone is None:
-        logger.debug("WhatsApp message from unregistered number %s (app %s) — ignored", phone[-4:], app_cfg.slug)
+        cyclops.event("gatekeeper.whatsapp.message", outcome="ignored",
+                      reason="unregistered_phone", app_slug=app_cfg.slug, phone_tail=phone[-4:])
         return
 
     # Check role in this app
@@ -76,12 +79,15 @@ async def _handle(
         )
     )
     if app_role is None:
-        logger.debug("User %s has no role for app %s — ignored", user_phone.user_id, app_cfg.slug)
+        cyclops.event("gatekeeper.whatsapp.message", outcome="ignored",
+                      reason="no_role", app_slug=app_cfg.slug, phone_tail=phone[-4:])
         return
 
     # Reset command
     if text.strip().lower() in _RESET_KEYWORDS:
         await wa_session.clear_session(db, phone, app_cfg.slug)
+        cyclops.event("gatekeeper.whatsapp.message", outcome="reset",
+                      app_slug=app_cfg.slug, phone_tail=phone[-4:])
         await _send_whatsapp(
             gk_config=gk_config, app_cfg=app_cfg, to=phone,
             text="Starting a new conversation.", http_client=http_client,
@@ -108,6 +114,10 @@ async def _handle(
         "X-Gatekeeper-Group": app_role.group or "",
     }
 
+    cyclops.event("gatekeeper.whatsapp.message", outcome="dispatched",
+                  app_slug=app_cfg.slug, phone_tail=phone[-4:],
+                  has_conversation=conv_id is not None)
+
     try:
         resp = await http_client.post(
             wa_cfg.chat_endpoint, json=body, headers=headers, timeout=120.0,
@@ -116,6 +126,8 @@ async def _handle(
         data = resp.json()
     except Exception:
         logger.exception("Chat endpoint error for app %s", app_cfg.slug)
+        cyclops.event("gatekeeper.whatsapp.chat_error", app_slug=app_cfg.slug,
+                      phone_tail=phone[-4:], endpoint=wa_cfg.chat_endpoint)
         await _send_whatsapp(
             gk_config=gk_config, app_cfg=app_cfg, to=phone,
             text="Sorry, I couldn't reach the chat service right now. Please try again.",
@@ -129,6 +141,9 @@ async def _handle(
 
     reply_md = data.get("response") or ""
     reply_text = formatter.to_whatsapp(reply_md) if reply_md else "(no response)"
+
+    cyclops.event("gatekeeper.whatsapp.reply_sent", app_slug=app_cfg.slug,
+                  phone_tail=phone[-4:], reply_chars=len(reply_text))
 
     await _send_whatsapp(
         gk_config=gk_config, app_cfg=app_cfg, to=phone,
