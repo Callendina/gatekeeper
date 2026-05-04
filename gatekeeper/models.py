@@ -1,5 +1,5 @@
 import datetime
-from sqlalchemy import String, Integer, Boolean, DateTime, Text, ForeignKey, Index
+from sqlalchemy import String, Integer, Boolean, DateTime, Text, ForeignKey, Index, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from gatekeeper._time import utcnow
 from gatekeeper.database import Base
@@ -165,11 +165,35 @@ class SmsOtpChallenge(Base):
     )
 
 
+class WhatsAppSession(Base):
+    """Persists the active conversation_id for a WhatsApp phone+app pair.
+
+    One row per (phone_e164, app_slug). Updated in-place on each exchange
+    so that multi-turn chat stays coherent across Gatekeeper restarts.
+    conversation_id = NULL means no active conversation (user reset or
+    first message).
+    """
+    __tablename__ = "whatsapp_sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    phone_e164: Mapped[str] = mapped_column(String(20), nullable=False)
+    app_slug: Mapped[str] = mapped_column(String(100), nullable=False)
+    # conversation_id returned by the app's chat endpoint. NULL = start fresh.
+    conversation_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime, default=utcnow, onupdate=utcnow
+    )
+
+    __table_args__ = (
+        UniqueConstraint("phone_e164", "app_slug", name="uq_wa_phone_app"),
+    )
+
+
 class DebugSmsOutbox(Base):
     """Receives plaintext sends from FakeSmsProvider so dev/test can inspect
-    codes without parsing logs. Never written to in production (where the
-    provider is ClickSend, not fake). Retention is short — pruned by the
-    same periodic cleanup that drops expired challenges."""
+    codes without parsing logs. Never written to in production. Retention
+    is short — pruned by the same periodic cleanup that drops expired
+    challenges."""
     __tablename__ = "debug_sms_outbox"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
