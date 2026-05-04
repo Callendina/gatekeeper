@@ -72,6 +72,7 @@ from gatekeeper.admin.routes import router as admin_router, init_admin_routes  #
 from gatekeeper.middleware.rate_limit import cleanup_old_entries  # noqa: E402
 from gatekeeper.auth.sessions import cleanup_expired_sessions  # noqa: E402
 from gatekeeper.database import get_db  # noqa: E402
+from gatekeeper.whatsapp.router import router as whatsapp_router, init_whatsapp_routes  # noqa: E402
 
 
 async def periodic_cleanup():
@@ -96,6 +97,7 @@ _started_at = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _started_at
+    import httpx
     _started_at = datetime.datetime.now(datetime.timezone.utc)
     await init_db(config.database_path)
     await backfill_mfa_method(config)
@@ -112,6 +114,10 @@ async def lifespan(app: FastAPI):
     warn_if_real_provider_active(config.sms)
     setup_oauth(config)
 
+    # Shared httpx client for WhatsApp outbound calls (chat endpoints + Twilio).
+    http_client = httpx.AsyncClient(timeout=120.0)
+    init_whatsapp_routes(config, http_client)
+
     cleanup_task = asyncio.create_task(periodic_cleanup())
     cyclops.app_started(gatekeeper_env=config.environment or "")
 
@@ -124,6 +130,7 @@ async def lifespan(app: FastAPI):
             await cleanup_task
         except asyncio.CancelledError:
             pass
+        await http_client.aclose()
 
 
 app = FastAPI(title="Gatekeeper", docs_url=None, redoc_url=None, lifespan=lifespan)
@@ -150,6 +157,7 @@ app.include_router(totp_router)
 app.include_router(sms_otp_router)
 app.include_router(mfa_picker_router)
 app.include_router(admin_router)
+app.include_router(whatsapp_router)
 
 
 @app.get("/")
