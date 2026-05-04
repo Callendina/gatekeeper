@@ -71,10 +71,14 @@
                             <span style="color:#e67e22;font-size:0.85rem;">TOTP: started</span><br>
                         {% endif %}
                         {% if p and p.confirmed_at %}
-                            <span style="color:#27ae60;font-size:0.85rem;">SMS: ••••{{ p.e164[-4:] }}</span><br>
+                            <span style="color:#27ae60;font-size:0.85rem;">📱 {{ p.e164 }}</span><br>
                             <span class="local-date" data-utc="{{ p.confirmed_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}" style="color:#666;font-size:0.75rem;">{{ p.confirmed_at.strftime('%Y-%m-%d') }}</span><br>
+                            <form method="POST" action="/_auth/admin/users/{{ user.id }}/phone/remove" style="display:inline;margin-top:0.1rem;"
+                                  onsubmit="return confirm('Remove phone binding for {{ user.email }}?');">
+                                <button type="submit" style="background:#c0392b;font-size:0.7rem;padding:0.1rem 0.3rem;">Remove phone</button>
+                            </form><br>
                         {% elif p %}
-                            <span style="color:#e67e22;font-size:0.85rem;">SMS: started</span><br>
+                            <span style="color:#e67e22;font-size:0.85rem;">SMS: started ({{ p.e164 }})</span><br>
                         {% endif %}
                         {% if not t and not p %}
                             <span style="color:#999;font-size:0.85rem;">none</span><br>
@@ -85,6 +89,15 @@
                                 <button type="submit" style="background:#e67e22;font-size:0.75rem;padding:0.15rem 0.4rem;">Reset MFA</button>
                             </form>
                         {% endif %}
+                        <details style="margin-top:0.3rem;">
+                            <summary style="font-size:0.72rem;color:#888;cursor:pointer;">{% if p %}change phone{% else %}set phone{% endif %}</summary>
+                            <form method="POST" action="/_auth/admin/users/{{ user.id }}/phone" style="margin-top:0.2rem;">
+                                <input type="tel" name="phone_number" placeholder="+61412345678"
+                                       style="font-size:0.75rem;width:11em;padding:0.15rem 0.3rem;"
+                                       value="{{ p.e164 if p else '' }}">
+                                <button type="submit" style="font-size:0.75rem;padding:0.15rem 0.3rem;">Save</button>
+                            </form>
+                        </details>
                     </td>
                     <td>
                         {# Build per-app lookup so the role-set form can pre-fill the existing role + group. #}

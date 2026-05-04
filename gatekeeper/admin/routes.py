@@ -16,6 +16,7 @@ from gatekeeper.models import (
     APIKey, InviteCode, InviteUse, InviteWaitlist, InviteUserLimit,
     UserTOTP, UserPhone, SmsOtpChallenge,
 )
+from gatekeeper.sms.validation import normalize, PhoneValidationError
 from gatekeeper.middleware.ip_block import block_ip, unblock_ip
 from gatekeeper.auth.sessions import validate_session
 
@@ -383,9 +384,73 @@ async def delete_user(
     await db.execute(delete(Session).where(Session.user_id == user_id))
     await db.execute(delete(APIKey).where(APIKey.user_id == user_id))
     await db.execute(delete(InviteUserLimit).where(InviteUserLimit.user_id == user_id))
+    await db.execute(delete(UserPhone).where(UserPhone.user_id == user_id))
     await db.execute(delete(User).where(User.id == user_id))
     await db.commit()
 
+    return RedirectResponse(url="/_auth/admin/users", status_code=302)
+
+
+@router.post("/users/{user_id}/phone")
+async def admin_set_phone(
+    user_id: int,
+    request: Request,
+    phone_number: str = Form(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Bind a phone number to a user. Admin-confirmed immediately (no OTP).
+
+    Used for WhatsApp linking: operator onboards a coach by entering their
+    phone here, which sets confirmed_at = now so the WhatsApp handler can
+    resolve them.
+
+    Replaces any existing unconfirmed number. If a confirmed number already
+    exists, the form must be submitted again to override it (the template
+    shows a warning).
+    """
+    admin, redirect = _check_admin(await _require_admin(request, db))
+    if redirect:
+        return redirect
+
+    try:
+        e164, _ = normalize(phone_number, _config.sms.country_allowlist)
+    except PhoneValidationError as exc:
+        return HTMLResponse(
+            f"<h2>Invalid phone number</h2><p>{exc.code}: {phone_number!r}</p>"
+            f"<p><a href='/_auth/admin/users'>← back</a></p>",
+            status_code=400,
+        )
+
+    phone = await db.scalar(select(UserPhone).where(UserPhone.user_id == user_id))
+    if phone is None:
+        phone = UserPhone(
+            user_id=user_id, e164=e164,
+            confirmed_at=utcnow(), key_num=0,
+        )
+        db.add(phone)
+    else:
+        if phone.e164 != e164:
+            phone.key_num += 1
+        phone.e164 = e164
+        phone.confirmed_at = utcnow()
+        phone.last_change_at = utcnow()
+    await db.commit()
+    return RedirectResponse(url="/_auth/admin/users", status_code=302)
+
+
+@router.post("/users/{user_id}/phone/remove")
+async def admin_remove_phone(
+    user_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove a user's phone binding (deletes the user_phone row)."""
+    admin, redirect = _check_admin(await _require_admin(request, db))
+    if redirect:
+        return redirect
+
+    await db.execute(delete(UserPhone).where(UserPhone.user_id == user_id))
+    await db.commit()
     return RedirectResponse(url="/_auth/admin/users", status_code=302)
 
 
