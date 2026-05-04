@@ -28,7 +28,7 @@ from gatekeeper.auth.invites import (
     verify_invite_cookie, validate_invite_code_db, record_invite_use,
     make_invite_cookie, _invite_failures, INVITE_FAIL_LIMIT,
 )
-from gatekeeper.models import AccessLog, Session, User
+from gatekeeper.models import AccessLog, Session, User, TrustedPartner
 
 import fnmatch
 from urllib.parse import urlparse, parse_qs, urlencode, quote
@@ -176,6 +176,111 @@ async def _check_invite_gate(request: Request, db, app, ip: str,
     return Response(status_code=302, headers={"Location": invite_url})
 
 
+# Paths that must NEVER be honored via partner-key trust, regardless
+# of what the partner's allowed_paths says. Gatekeeper's own admin
+# surface and system-admin gate are off-limits to cross-gatekeeper
+# delegation — a partner can claim arbitrary user identities, but it
+# can't use that to admin-promote against the trustor.
+_PARTNER_BLOCKED_PATH_PREFIXES = ("/_auth/admin", "/_auth/verify-system-admin")
+
+
+def _ip_in_allowlist(ip: str, allowlist_text: str) -> bool:
+    """Match `ip` against newline-separated CIDR/IP entries. Lines may
+    carry a trailing "  # hostname" comment from save-time resolution;
+    everything after the first '#' is stripped before parsing."""
+    import ipaddress
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    for line in allowlist_text.splitlines():
+        s = line.split("#", 1)[0].strip()
+        if not s:
+            continue
+        try:
+            net = ipaddress.ip_network(s, strict=False)
+        except ValueError:
+            continue
+        if addr in net:
+            return True
+    return False
+
+
+async def _verify_partner_key(
+    *, db: AsyncSession, request: Request, app: AppConfig, ip: str,
+    path: str, method: str, header_value: str, log_extra: dict,
+) -> Response:
+    """Validate an inbound X-Gatekeeper-Partner-Key. On success, return
+    200 with the inbound identity headers echoed back so Caddy passes
+    them through to the upstream app. On failure, return 401."""
+    import hashlib
+    import cyclops
+
+    # Hard-block paths that can't be reached through partner trust.
+    if any(path.startswith(p) for p in _PARTNER_BLOCKED_PATH_PREFIXES):
+        await _log(db, ip, app.slug, path, method, None,
+                   "partner_path_forbidden", **log_extra)
+        cyclops.event("gatekeeper.partner.rejected",
+                      reason="path_forbidden", path=path, ip=ip)
+        return Response(status_code=403, content="Path not permitted via partner trust")
+
+    digest = hashlib.sha256(header_value.encode("utf-8")).hexdigest()
+    partner = await db.scalar(
+        select(TrustedPartner).where(
+            TrustedPartner.api_key_hash == digest,
+            TrustedPartner.enabled == True,
+        )
+    )
+    if partner is None:
+        await _log(db, ip, app.slug, path, method, None,
+                   "partner_key_invalid", **log_extra)
+        cyclops.event("gatekeeper.partner.rejected",
+                      reason="key_invalid", ip=ip,
+                      masked_key=cyclops.redact_token(header_value))
+        return Response(status_code=401, content="Invalid partner key")
+
+    if partner.allowed_ips and not _ip_in_allowlist(ip, partner.allowed_ips):
+        await _log(db, ip, app.slug, path, method, None,
+                   f"partner_ip_denied:{partner.name}", **log_extra)
+        cyclops.event("gatekeeper.partner.rejected",
+                      reason="ip_denied", partner=partner.name, ip=ip)
+        return Response(status_code=403, content="Partner IP not in allowlist")
+
+    if not partner.allowed_paths or not _path_matches_any(
+        path, [l.strip() for l in partner.allowed_paths.splitlines() if l.strip()]
+    ):
+        await _log(db, ip, app.slug, path, method, None,
+                   f"partner_path_denied:{partner.name}", **log_extra)
+        cyclops.event("gatekeeper.partner.rejected",
+                      reason="path_denied", partner=partner.name,
+                      path=path, ip=ip)
+        return Response(status_code=403, content="Path not permitted for this partner")
+
+    # All checks passed — accept the inbound identity headers and pass
+    # them through to the upstream app. Caddy forwards the inbound
+    # X-Gatekeeper-User/-Role/-Group as X-Forwarded-Gatekeeper-* (see
+    # caddy/example.Caddyfile).
+    user_hdr = request.headers.get("x-forwarded-gatekeeper-user", "")
+    role_hdr = request.headers.get("x-forwarded-gatekeeper-role", "")
+    group_hdr = request.headers.get("x-forwarded-gatekeeper-group", "")
+
+    partner.last_seen_at = utcnow()
+    await db.commit()
+
+    await _log(db, ip, app.slug, path, method,
+               user_hdr or f"partner:{partner.name}", "allowed_partner",
+               **log_extra)
+    cyclops.event("gatekeeper.partner.accepted",
+                  partner=partner.name, app_slug=app.slug,
+                  path=path, ip=ip, claimed_user=user_hdr or None)
+
+    response = Response(status_code=200)
+    response.headers["X-Gatekeeper-User"] = user_hdr
+    response.headers["X-Gatekeeper-Role"] = role_hdr
+    response.headers["X-Gatekeeper-Group"] = group_hdr
+    return response
+
+
 @router.get("/_auth/verify")
 @router.head("/_auth/verify")
 async def verify(request: Request, db: AsyncSession = Depends(get_db)):
@@ -199,6 +304,19 @@ async def verify(request: Request, db: AsyncSession = Depends(get_db)):
     if await is_ip_blocked(db, ip):
         await _log(db, ip, app.slug, path, method, None, "blocked", **_extra)
         return Response(status_code=403, content="Blocked")
+
+    # 1b. Gatekeeper-to-gatekeeper partner trust. If the request carries
+    # a valid X-Gatekeeper-Partner-Key (forwarded by Caddy as
+    # X-Forwarded-Gatekeeper-Partner-Key) and the partner's allowlists
+    # all match, accept the inbound X-Gatekeeper-* identity headers as
+    # authoritative and skip the rest of the auth gates. Issue #14.
+    partner_key_header = request.headers.get("x-forwarded-gatekeeper-partner-key", "")
+    if partner_key_header:
+        return await _verify_partner_key(
+            db=db, request=request, app=app, ip=ip,
+            path=path, method=method, header_value=partner_key_header,
+            log_extra=_extra,
+        )
 
     # 2. Invite gate (only for invite_only apps)
     if app.invite.enabled:

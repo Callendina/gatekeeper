@@ -29,6 +29,14 @@ myapp.example.com {
 
 # App 2: App with JS frontend + API that requires keys
 # Caddy forwards the client's X-API-Key to gatekeeper as X-Forwarded-API-Key.
+#
+# This block also opts into gatekeeper-to-gatekeeper partner trust: a
+# remote gatekeeper (e.g. prod calling staging) can present
+# X-Gatekeeper-Partner-Key plus X-Gatekeeper-User/-Role/-Group, and if
+# the key matches a TrustedPartner row and the partner's allowlists
+# pass, gatekeeper will accept the inbound identity as authoritative
+# and skip its usual session/MFA gates. See /_auth/admin/partners and
+# issue #14.
 webapp.example.com {
 	handle /_auth/* {
 		reverse_proxy localhost:9100
@@ -38,6 +46,14 @@ webapp.example.com {
 		forward_auth localhost:9100 {
 			uri /_auth/verify
 			header_up X-Forwarded-API-Key {header.X-API-Key}
+			# Partner-trust headers — only honored when the key
+			# validates against a TrustedPartner row. Drop these
+			# four `header_up` lines on apps that should never be
+			# reachable via partner trust.
+			header_up X-Forwarded-Gatekeeper-Partner-Key {header.X-Gatekeeper-Partner-Key}
+			header_up X-Forwarded-Gatekeeper-User {header.X-Gatekeeper-User}
+			header_up X-Forwarded-Gatekeeper-Role {header.X-Gatekeeper-Role}
+			header_up X-Forwarded-Gatekeeper-Group {header.X-Gatekeeper-Group}
 			copy_headers X-Gatekeeper-User X-Gatekeeper-Role X-Gatekeeper-Group X-Gatekeeper-System-Admin
 		}
 
