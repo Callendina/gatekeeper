@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Partners - Gatekeeper Admin</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f5f5; color: #333; }
+        .nav { background: #2c3e50; color: white; padding: 1rem 2rem; display: flex; justify-content: space-between; align-items: center; }
+        .nav a { color: #ecf0f1; text-decoration: none; margin-left: 1.5rem; }
+        .nav a:hover { color: white; }
+        .content { max-width: 1100px; margin: 2rem auto; padding: 0 1rem; }
+        h2 { margin-bottom: 0.5rem; }
+        h3 { margin-top: 2rem; margin-bottom: 0.75rem; }
+        p.help { color: #666; margin-bottom: 1rem; font-size: 0.9rem; }
+        .panel { background: white; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .add-form { display: flex; gap: 0.5rem; align-items: end; flex-wrap: wrap; }
+        .add-form .field { display: flex; flex-direction: column; }
+        .add-form label { font-size: 0.8rem; margin-bottom: 0.2rem; }
+        .add-form input, .add-form textarea { padding: 0.4rem; border: 1px solid #ddd; border-radius: 4px; font-family: inherit; }
+        textarea { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 0.85rem; }
+        table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        th, td { padding: 0.6rem 0.75rem; text-align: left; border-bottom: 1px solid #eee; vertical-align: top; font-size: 0.9rem; }
+        th { background: #f8f9fa; font-weight: 600; }
+        button { padding: 0.4rem 0.8rem; border-radius: 4px; border: none; cursor: pointer; font-size: 0.85rem; }
+        .btn-add { background: #4a90d9; color: white; }
+        .btn-update { background: #4a90d9; color: white; }
+        .btn-rotate { background: #e67e22; color: white; }
+        .btn-remove { background: #e74c3c; color: white; }
+        code { background: #f4f4f4; padding: 0.1rem 0.3rem; border-radius: 3px; font-size: 0.85rem; word-break: break-all; }
+        .key-display { background: #fff8e1; border: 2px solid #f39c12; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; }
+        .key-display strong { color: #e67e22; }
+        .key-display code { display: block; padding: 0.6rem; margin-top: 0.5rem; background: white; font-size: 0.95rem; }
+        .error { background: #ffebee; border: 1px solid #e74c3c; color: #c62828; padding: 0.75rem 1rem; border-radius: 6px; margin-bottom: 1rem; }
+        .row-form { display: flex; gap: 0.4rem; flex-wrap: wrap; align-items: end; }
+        .row-form input[type=text] { padding: 0.3rem; border: 1px solid #ddd; border-radius: 3px; font-size: 0.85rem; }
+        .row-form textarea { padding: 0.3rem; border: 1px solid #ddd; border-radius: 3px; font-size: 0.8rem; min-width: 12rem; min-height: 3rem; }
+        .meta { color: #999; font-size: 0.75rem; }
+    </style>
+</head>
+<body>
+    <div class="nav">
+        <strong>Gatekeeper Admin</strong>{% if environment %}<span style="color:#e74c3c;font-weight:bold;margin-left:1rem;font-size:0.9rem;">{{ environment }}</span>{% endif %}
+        <div>
+            <a href="/_auth/admin">Dashboard</a>
+            <a href="/_auth/admin/users">Users</a>
+            <a href="/_auth/admin/partners">Partners</a>
+            <a href="/_auth/admin/ip-blocklist">IP Blocklist</a>
+            <a href="/_auth/admin/access-log">Access Log</a>
+            <a href="/_auth/admin/api-keys">API Keys</a>
+            <a href="/_auth/admin/sms">SMS</a>
+            <a href="/_auth/admin/analytics">Analytics</a>
+            <a href="/_auth/admin/invites">Invites{% if pending_waitlist %} <span style="background:#e74c3c;color:white;border-radius:10px;padding:1px 6px;font-size:0.75rem;">{{ pending_waitlist }}</span>{% endif %}</a>
+            {% if terminal_enabled %}<a href="/_term/" title="Web terminal (system admin only)">Terminal</a>{% endif %}
+            <span style="margin-left:1.5rem; opacity:0.7;">{{ admin_email }}</span>
+        </div>
+    </div>
+    <div class="content">
+        <h2>Partners</h2>
+        <p class="help">Gatekeeper-to-gatekeeper trust relationships. Trust is one-way: a row in <em>Trusted partners</em> means we accept inbound calls bearing that key; a row in <em>Outbound partners</em> means we hold a credential to call <em>them</em>.</p>
+
+        {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+        {% if issued_inbound_key %}
+        <div class="key-display">
+            <strong>New key for &quot;{{ issued_inbound_name }}&quot;</strong> &mdash; copy this now, it will not be shown again. Hand it to the trusting gatekeeper as the <code>api_key</code> on its outbound partner record.
+            <code>{{ issued_inbound_key }}</code>
+        </div>
+        {% endif %}
+
+        <h3>Trusted partners (inbound)</h3>
+        <p class="help">Partners that may call this gatekeeper with <code>X-Gatekeeper-Partner-Key</code>. When the key matches and the request path is in <code>allowed_paths</code>, we honor the inbound <code>X-Gatekeeper-User</code>/<code>-Role</code>/<code>-Group</code> headers as authoritative.</p>
+
+        <div class="panel">
+            <form method="POST" action="/_auth/admin/partners/inbound/add" class="add-form">
+                <div class="field">
+                    <label>Name</label>
+                    <input type="text" name="name" required placeholder="prod-gk">
+                </div>
+                <div class="field" style="flex:1; min-width: 14rem;">
+                    <label>Allowed paths (one per line, fnmatch glob)</label>
+                    <textarea name="allowed_paths" rows="2" placeholder="/api/chat">/api/chat</textarea>
+                </div>
+                <div class="field" style="flex:1; min-width: 12rem;">
+                    <label>Allowed IPs/CIDRs/hostnames (one per line; blank = no IP check)</label>
+                    <textarea name="allowed_ips" rows="2" placeholder="203.0.113.7&#10;203.0.113.0/24&#10;prod.callendina.com"></textarea>
+                </div>
+                <div class="field" style="flex:1; min-width: 12rem;">
+                    <label>Notes</label>
+                    <input type="text" name="notes" placeholder="prod gatekeeper, scout chat only">
+                </div>
+                <button type="submit" class="btn-add">Add &amp; generate key</button>
+            </form>
+        </div>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Edit</th>
+                    <th>Enabled</th>
+                    <th>Last seen</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for p in inbound %}
+                <tr>
+                    <td><strong>{{ p.name }}</strong><div class="meta">created {{ p.created_at.strftime('%Y-%m-%d') }}</div></td>
+                    <td>
+                        <form method="POST" action="/_auth/admin/partners/inbound/{{ p.id }}/update" class="row-form">
+                            <div class="field"><label class="meta">Paths</label><textarea name="allowed_paths" rows="2">{{ p.allowed_paths }}</textarea></div>
+                            <div class="field"><label class="meta">IPs/CIDRs</label><textarea name="allowed_ips" rows="2" placeholder="(blank = no IP check)">{{ p.allowed_ips }}</textarea></div>
+                            <input type="text" name="notes" value="{{ p.notes or '' }}" placeholder="notes">
+                            <label class="meta"><input type="checkbox" name="enabled" value="1" {% if p.enabled %}checked{% endif %}> enabled</label>
+                            <button type="submit" class="btn-update">Update</button>
+                        </form>
+                    </td>
+                    <td>{% if p.enabled %}yes{% else %}<span style="color:#e74c3c;">no</span>{% endif %}</td>
+                    <td>{% if p.last_seen_at %}<span class="local-time" data-utc="{{ p.last_seen_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}">{{ p.last_seen_at.strftime('%Y-%m-%d %H:%M') }}</span>{% else %}<span class="meta">never</span>{% endif %}</td>
+                    <td>
+                        <form method="POST" action="/_auth/admin/partners/inbound/{{ p.id }}/rotate" style="display:inline;" onsubmit="return confirm('Rotate the key for {{ p.name }}? The old key stops working immediately.');">
+                            <button type="submit" class="btn-rotate">Rotate key</button>
+                        </form>
+                        <form method="POST" action="/_auth/admin/partners/inbound/{{ p.id }}/delete" style="display:inline;" onsubmit="return confirm('Delete trusted partner {{ p.name }}? Inbound calls bearing this key will be rejected.');">
+                            <button type="submit" class="btn-remove">Delete</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+                {% if not inbound %}
+                <tr><td colspan="5" style="text-align:center; color:#999;">No trusted partners</td></tr>
+                {% endif %}
+            </tbody>
+        </table>
+
+        <h3>Outbound partners</h3>
+        <p class="help">Remote gatekeepers that <em>this</em> gatekeeper calls. Used by features like the WhatsApp staging redirect (<code>whatsapp.staging_partner</code> in app config). The API key is sent as <code>X-Gatekeeper-Partner-Key</code> on every outbound call.</p>
+
+        <div class="panel">
+            <form method="POST" action="/_auth/admin/partners/outbound/add" class="add-form">
+                <div class="field">
+                    <label>Name</label>
+                    <input type="text" name="name" required placeholder="staging">
+                </div>
+                <div class="field" style="flex:1; min-width: 16rem;">
+                    <label>Base URL</label>
+                    <input type="text" name="base_url" required placeholder="https://staging.callendina.com">
+                </div>
+                <div class="field" style="flex:1; min-width: 16rem;">
+                    <label>API key (from the trusted-partner page on that gk)</label>
+                    <input type="text" name="api_key" required>
+                </div>
+                <div class="field" style="flex:1; min-width: 12rem;">
+                    <label>Notes</label>
+                    <input type="text" name="notes" placeholder="staging gk">
+                </div>
+                <button type="submit" class="btn-add">Add</button>
+            </form>
+        </div>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Edit</th>
+                    <th>Enabled</th>
+                    <th>Last used</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for p in outbound %}
+                <tr>
+                    <td><strong>{{ p.name }}</strong><div class="meta">created {{ p.created_at.strftime('%Y-%m-%d') }}</div></td>
+                    <td>
+                        <form method="POST" action="/_auth/admin/partners/outbound/{{ p.id }}/update" class="row-form">
+                            <input type="text" name="base_url" value="{{ p.base_url }}" required style="min-width:18rem;">
+                            <input type="text" name="api_key" placeholder="api_key (blank = leave unchanged)" style="min-width:14rem;">
+                            <input type="text" name="notes" value="{{ p.notes or '' }}" placeholder="notes">
+                            <label class="meta"><input type="checkbox" name="enabled" value="1" {% if p.enabled %}checked{% endif %}> enabled</label>
+                            <button type="submit" class="btn-update">Update</button>
+                        </form>
+                    </td>
+                    <td>{% if p.enabled %}yes{% else %}<span style="color:#e74c3c;">no</span>{% endif %}</td>
+                    <td>{% if p.last_used_at %}<span class="local-time" data-utc="{{ p.last_used_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}">{{ p.last_used_at.strftime('%Y-%m-%d %H:%M') }}</span>{% else %}<span class="meta">never</span>{% endif %}</td>
+                    <td>
+                        <form method="POST" action="/_auth/admin/partners/outbound/{{ p.id }}/delete" style="display:inline;" onsubmit="return confirm('Delete outbound partner {{ p.name }}? Any feature pointed at this partner will fall back to its prod default.');">
+                            <button type="submit" class="btn-remove">Delete</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+                {% if not outbound %}
+                <tr><td colspan="5" style="text-align:center; color:#999;">No outbound partners</td></tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+<script>
+const tz = new Date().toLocaleTimeString('en', {timeZoneName: 'short'}).split(' ').pop();
+document.querySelectorAll('.local-time').forEach(el => {
+    const utc = el.dataset.utc;
+    if (!utc) return;
+    const d = new Date(utc);
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mi = String(d.getMinutes()).padStart(2, '0');
+    el.textContent = `${mm}-${dd} ${hh}:${mi} ${tz}`;
+});
+</script>
+</body>
+</html>

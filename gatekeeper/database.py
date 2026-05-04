@@ -24,6 +24,7 @@ async def init_db(database_path: str):
             AccessLog, APIKey, InviteCode, InviteUse, InviteWaitlist,
             InviteUserLimit, UserTOTP, UserPhone, SmsOtpChallenge,
             DebugSmsOutbox, WhatsAppSession, WhatsAppPhoneState,
+            PartnerEndpoint, TrustedPartner,
         )
         await conn.run_sync(Base.metadata.create_all)
 

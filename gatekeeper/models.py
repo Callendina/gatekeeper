@@ -62,6 +62,70 @@ class UserAppRole(Base):
     )
 
 
+class PartnerEndpoint(Base):
+    """Outbound side of a gatekeeper-to-gatekeeper trust relationship.
+
+    A row here means: when this gatekeeper needs to dispatch a request to
+    a remote app (e.g. WhatsApp staging redirect, or future cross-VM
+    forwarding), it should call <base_url>/<path> with
+    X-Gatekeeper-Partner-Key: <api_key>. The remote gatekeeper validates
+    the key against its own TrustedPartner table.
+
+    Trust is one-way: the local gk is the *trustor* of nothing here; it
+    just holds the credential it presents when calling the partner.
+    """
+    __tablename__ = "partner_endpoints"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    base_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    api_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=utcnow)
+    last_used_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class TrustedPartner(Base):
+    """Inbound side of a gatekeeper-to-gatekeeper trust relationship.
+
+    A row here means: when an inbound request arrives at /_auth/verify
+    carrying X-Gatekeeper-Partner-Key matching <api_key>, this gatekeeper
+    will:
+      - skip its own session/MFA/invite gates
+      - trust the inbound X-Gatekeeper-User/Role/Group headers
+      - allow the request only if its path matches one of allowed_paths
+
+    Trust is unidirectional: this row says "I trust the holder of this
+    key to claim any user identity within the path allowlist." The
+    partner has no reciprocal capability against this gatekeeper unless
+    a corresponding PartnerEndpoint is also configured.
+    """
+    __tablename__ = "trusted_partners"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    # sha256 hex digest of the partner key, never the cleartext value.
+    # The cleartext is shown to the admin once at create/rotate time and
+    # then exists only in the partner's own PartnerEndpoint row on the
+    # other gk. Reading this DB does not leak usable credentials.
+    api_key_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    # Glob patterns matched against the original request path (e.g.
+    # "/api/chat", "/api/*"). Empty list = no paths allowed (effectively
+    # disabled even if enabled=True). Stored as newline-separated text.
+    allowed_paths: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    # Optional IP/CIDR allowlist (newline-separated, e.g. "203.0.113.7"
+    # or "203.0.113.0/24"; supports IPv4 and IPv6). Empty = no IP check.
+    # When set, an inbound request must carry both a valid partner key
+    # AND originate from an allowed address. Adds defense-in-depth so a
+    # leaked key alone is not sufficient to impersonate.
+    allowed_ips: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=utcnow)
+    last_seen_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class Session(Base):
     __tablename__ = "sessions"
 

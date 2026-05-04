@@ -22,8 +22,9 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from gatekeeper._time import utcnow
 from gatekeeper.config import AppConfig, GatekeeperConfig
-from gatekeeper.models import UserAppRole, UserPhone, User
+from gatekeeper.models import UserAppRole, UserPhone, User, PartnerEndpoint
 from gatekeeper.sms.providers import get_provider
 from gatekeeper.whatsapp import formatter, session as wa_session
 
@@ -168,6 +169,34 @@ async def _handle(
     await _send_menu(gk_config=gk_config, to=phone, apps=eligible_apps, http_client=http_client)
 
 
+async def _resolve_staging_partner(
+    db: AsyncSession, wa_cfg, app_slug: str,
+) -> PartnerEndpoint | None:
+    """Look up the PartnerEndpoint named in wa_cfg.staging_partner.
+    Returns None (with a logged warning) if the app has no staging
+    partner configured, the named row doesn't exist, or the row is
+    disabled — the caller falls back to the prod chat endpoint."""
+    if not wa_cfg.staging_partner:
+        logger.warning(
+            "redirect_to_staging set for app=%s but no staging_partner "
+            "configured — falling back to prod", app_slug,
+        )
+        return None
+    partner = await db.scalar(
+        select(PartnerEndpoint).where(
+            PartnerEndpoint.name == wa_cfg.staging_partner,
+            PartnerEndpoint.enabled == True,
+        )
+    )
+    if partner is None:
+        logger.warning(
+            "redirect_to_staging set for app=%s but staging_partner=%r "
+            "not found or disabled — falling back to prod",
+            app_slug, wa_cfg.staging_partner,
+        )
+    return partner
+
+
 async def _send_menu(
     *,
     gk_config: GatekeeperConfig,
@@ -198,21 +227,22 @@ async def _chat(
     wa_cfg = app_cfg.whatsapp
 
     # Per-(user, app) staging redirect: route this tester's traffic at
-    # the app's configured staging chat backend without redeploying.
-    # See issue #14. Falls back to prod (with a warning) if the admin
-    # toggled the flag on but no staging URL is configured for the app.
-    if app_role.redirect_to_staging and wa_cfg.chat_endpoint_staging:
-        endpoint = wa_cfg.chat_endpoint_staging
-        staging_active = True
-    else:
-        endpoint = wa_cfg.chat_endpoint
-        staging_active = False
-        if app_role.redirect_to_staging:
-            logger.warning(
-                "redirect_to_staging set on (user=%s, app=%s) but no "
-                "chat_endpoint_staging configured — falling back to prod",
-                user_phone.user_id, app_cfg.slug,
-            )
+    # the app's configured staging chat backend without redeploying. See
+    # issue #14. Resolves a PartnerEndpoint row to get the staging
+    # base_url and the partner API key. Falls back to prod (with a
+    # warning) if the flag is on but the partner isn't usable.
+    endpoint = wa_cfg.chat_endpoint
+    partner_key = None
+    staging_active = False
+    if app_role.redirect_to_staging:
+        partner = await _resolve_staging_partner(db, wa_cfg, app_cfg.slug)
+        if partner is not None:
+            path = wa_cfg.staging_path or "/api/chat"
+            endpoint = partner.base_url.rstrip("/") + path
+            partner_key = partner.api_key
+            staging_active = True
+            partner.last_used_at = utcnow()
+            await db.commit()
 
     # Build chat request body
     conv_id = await wa_session.get_conversation_id(db, phone, app_cfg.slug)
@@ -231,6 +261,8 @@ async def _chat(
         "X-Gatekeeper-Role": app_role.role or "user",
         "X-Gatekeeper-Group": app_role.group or "",
     }
+    if partner_key:
+        headers["X-Gatekeeper-Partner-Key"] = partner_key
 
     cyclops.event("gatekeeper.whatsapp.message", outcome="dispatched",
                   app_slug=app_cfg.slug, phone_tail=phone[-4:],

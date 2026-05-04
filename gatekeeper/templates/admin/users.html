@@ -26,6 +26,7 @@
         <div>
             <a href="/_auth/admin">Dashboard</a>
             <a href="/_auth/admin/users">Users</a>
+            <a href="/_auth/admin/partners">Partners</a>
             <a href="/_auth/admin/ip-blocklist">IP Blocklist</a>
             <a href="/_auth/admin/access-log">Access Log</a>
             <a href="/_auth/admin/api-keys">API Keys</a>
@@ -132,8 +133,8 @@
                                 {% endfor %}
                             </select>
                             <input type="text" name="group" placeholder="group (e.g. CLUB.PEN)" value="{{ cur.group if cur and cur.group else '' }}" style="font-size:0.85rem;width:11rem;">
-                            {% if app_cfg.whatsapp and app_cfg.whatsapp.chat_endpoint_staging %}
-                            <label style="font-size:0.8rem;color:#666;" title="Route this user's WhatsApp messages to {{ app_cfg.whatsapp.chat_endpoint_staging }}">
+                            {% if app_cfg.whatsapp and app_cfg.whatsapp.staging_partner %}
+                            <label style="font-size:0.8rem;color:#666;" title="Route this user's WhatsApp messages via partner '{{ app_cfg.whatsapp.staging_partner }}'">
                                 <input type="checkbox" name="redirect_to_staging" value="1" {% if cur and cur.redirect_to_staging %}checked{% endif %}>
                                 staging
                             </label>

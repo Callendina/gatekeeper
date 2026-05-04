@@ -15,6 +15,7 @@ from gatekeeper.models import (
     User, UserAppRole, OAuthAccount, IPBlocklist, AccessLog, Session,
     APIKey, InviteCode, InviteUse, InviteWaitlist, InviteUserLimit,
     UserTOTP, UserPhone, SmsOtpChallenge,
+    PartnerEndpoint, TrustedPartner,
 )
 from gatekeeper.sms.validation import normalize, PhoneValidationError
 from gatekeeper.middleware.ip_block import block_ip, unblock_ip
@@ -1218,3 +1219,318 @@ async def analytics_page(
         "terminal_enabled": _config.terminal_enabled,
         "pending_waitlist": await _pending_waitlist_count(db),
     })
+
+
+# ----- Gatekeeper-to-gatekeeper partner trust -----
+#
+# Two sides of the same primitive:
+#   - PartnerEndpoint:  this gk holds a credential to call a remote gk
+#                       ("outbound"; e.g. prod calling staging). API key
+#                       stored cleartext because gk has to send it.
+#   - TrustedPartner:   this gk accepts a credential from a remote gk
+#                       ("inbound"; e.g. staging being called by prod).
+#                       API key stored as sha256 hex; cleartext is shown
+#                       once at create/rotate and never persisted here.
+
+def _hash_partner_key(key: str) -> str:
+    import hashlib
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()
+
+
+async def _render_partners_page(
+    request: Request, db: AsyncSession, admin: str,
+    *, issued_inbound_key: str | None = None,
+    issued_inbound_name: str | None = None,
+    error: str | None = None,
+):
+    outbound = (await db.execute(
+        select(PartnerEndpoint).order_by(PartnerEndpoint.name)
+    )).scalars().all()
+    inbound = (await db.execute(
+        select(TrustedPartner).order_by(TrustedPartner.name)
+    )).scalars().all()
+    return templates.TemplateResponse(request, "admin/partners.html", {
+        "request": request,
+        "outbound": outbound,
+        "inbound": inbound,
+        "issued_inbound_key": issued_inbound_key,
+        "issued_inbound_name": issued_inbound_name,
+        "error": error,
+        "admin_email": admin,
+        "environment": _config.environment,
+        "terminal_enabled": _config.terminal_enabled,
+        "pending_waitlist": await _pending_waitlist_count(db),
+    })
+
+
+@router.get("/partners")
+async def partners_page(request: Request, db: AsyncSession = Depends(get_db)):
+    admin, redirect = _check_admin(await _require_admin(request, db))
+    if redirect:
+        return redirect
+    return await _render_partners_page(request, db, admin)
+
+
+@router.post("/partners/outbound/add")
+async def add_outbound_partner(
+    request: Request,
+    name: str = Form(...),
+    base_url: str = Form(...),
+    api_key: str = Form(...),
+    notes: str = Form(""),
+    db: AsyncSession = Depends(get_db),
+):
+    admin, redirect = _check_admin(await _require_admin(request, db))
+    if redirect:
+        return redirect
+
+    name_norm = name.strip()
+    base_url_norm = base_url.strip().rstrip("/")
+    api_key_norm = api_key.strip()
+    if not (name_norm and base_url_norm and api_key_norm):
+        return await _render_partners_page(
+            request, db, admin,
+            error="name, base_url, and api_key are all required",
+        )
+
+    existing = await db.scalar(
+        select(PartnerEndpoint).where(PartnerEndpoint.name == name_norm)
+    )
+    if existing:
+        return await _render_partners_page(
+            request, db, admin,
+            error=f"Outbound partner '{name_norm}' already exists",
+        )
+
+    db.add(PartnerEndpoint(
+        name=name_norm, base_url=base_url_norm, api_key=api_key_norm,
+        notes=notes.strip() or None,
+    ))
+    await db.commit()
+    return RedirectResponse(url="/_auth/admin/partners", status_code=302)
+
+
+@router.post("/partners/outbound/{partner_id}/update")
+async def update_outbound_partner(
+    partner_id: int,
+    request: Request,
+    base_url: str = Form(...),
+    api_key: str = Form(""),
+    enabled: str = Form(""),
+    notes: str = Form(""),
+    db: AsyncSession = Depends(get_db),
+):
+    admin, redirect = _check_admin(await _require_admin(request, db))
+    if redirect:
+        return redirect
+
+    row = await db.scalar(
+        select(PartnerEndpoint).where(PartnerEndpoint.id == partner_id)
+    )
+    if row is None:
+        return await _render_partners_page(
+            request, db, admin, error="Outbound partner not found",
+        )
+    row.base_url = base_url.strip().rstrip("/")
+    # Empty api_key field on update means "leave unchanged" so admins can
+    # tweak base_url/notes without re-typing the secret.
+    new_key = api_key.strip()
+    if new_key:
+        row.api_key = new_key
+    row.enabled = bool(enabled)
+    row.notes = notes.strip() or None
+    await db.commit()
+    return RedirectResponse(url="/_auth/admin/partners", status_code=302)
+
+
+@router.post("/partners/outbound/{partner_id}/delete")
+async def delete_outbound_partner(
+    partner_id: int, request: Request, db: AsyncSession = Depends(get_db),
+):
+    admin, redirect = _check_admin(await _require_admin(request, db))
+    if redirect:
+        return redirect
+
+    await db.execute(
+        delete(PartnerEndpoint).where(PartnerEndpoint.id == partner_id)
+    )
+    await db.commit()
+    return RedirectResponse(url="/_auth/admin/partners", status_code=302)
+
+
+def _normalise_paths(raw: str, default: str = "") -> str:
+    return "\n".join(
+        line.strip() for line in raw.splitlines() if line.strip()
+    ) or default
+
+
+async def _normalise_ips(raw: str) -> tuple[str, str | None]:
+    """Validate and normalise newline-separated entries. Each line may
+    be an IP address, a CIDR range, or a hostname; hostnames are
+    resolved to their A/AAAA records at save time and the resolved
+    addresses are stored. Returns (normalised_text, error_message).
+    Empty input is allowed (= no IP restriction).
+
+    DNS happens in a worker thread so the event loop is not blocked on
+    slow lookups. If a hostname fails to resolve, that's a hard error —
+    silently dropping it would leave the operator with a config that
+    looks like it ought to allow a host but doesn't."""
+    import ipaddress
+    import asyncio
+    import socket
+
+    def _resolve(host: str) -> list[str] | None:
+        try:
+            infos = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+        except socket.gaierror:
+            return None
+        # Deduplicate while preserving order.
+        seen: list[str] = []
+        for info in infos:
+            ip = info[4][0]
+            if ip not in seen:
+                seen.append(ip)
+        return seen
+
+    out: list[str] = []
+    for line in raw.splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        try:
+            net = ipaddress.ip_network(s, strict=False)
+            out.append(str(net))
+            continue
+        except ValueError:
+            pass
+        # Not an IP/CIDR — try hostname resolution.
+        resolved = await asyncio.to_thread(_resolve, s)
+        if not resolved:
+            return "", f"Could not resolve hostname or parse as IP/CIDR: {s!r}"
+        for ip in resolved:
+            net = ipaddress.ip_network(ip, strict=False)
+            entry = str(net)
+            # Annotate so the operator can see what each line came from.
+            out.append(f"{entry}  # {s}")
+    return "\n".join(out), None
+
+
+@router.post("/partners/inbound/add")
+async def add_inbound_partner(
+    request: Request,
+    name: str = Form(...),
+    allowed_paths: str = Form(""),
+    allowed_ips: str = Form(""),
+    notes: str = Form(""),
+    db: AsyncSession = Depends(get_db),
+):
+    admin, redirect = _check_admin(await _require_admin(request, db))
+    if redirect:
+        return redirect
+
+    name_norm = name.strip()
+    if not name_norm:
+        return await _render_partners_page(
+            request, db, admin, error="name is required",
+        )
+    existing = await db.scalar(
+        select(TrustedPartner).where(TrustedPartner.name == name_norm)
+    )
+    if existing:
+        return await _render_partners_page(
+            request, db, admin,
+            error=f"Trusted partner '{name_norm}' already exists",
+        )
+
+    ips_norm, ip_err = await _normalise_ips(allowed_ips)
+    if ip_err:
+        return await _render_partners_page(request, db, admin, error=ip_err)
+
+    import secrets
+    new_key = secrets.token_urlsafe(32)
+    # Default allowed_paths to /api/chat if nothing provided so the
+    # WhatsApp use case works out-of-the-box.
+    paths = _normalise_paths(allowed_paths, default="/api/chat")
+    db.add(TrustedPartner(
+        name=name_norm, api_key_hash=_hash_partner_key(new_key),
+        allowed_paths=paths, allowed_ips=ips_norm,
+        notes=notes.strip() or None,
+    ))
+    await db.commit()
+    # Show the key once on the same page; never persisted in URL or logs.
+    return await _render_partners_page(
+        request, db, admin,
+        issued_inbound_key=new_key, issued_inbound_name=name_norm,
+    )
+
+
+@router.post("/partners/inbound/{partner_id}/update")
+async def update_inbound_partner(
+    partner_id: int,
+    request: Request,
+    allowed_paths: str = Form(""),
+    allowed_ips: str = Form(""),
+    enabled: str = Form(""),
+    notes: str = Form(""),
+    db: AsyncSession = Depends(get_db),
+):
+    admin, redirect = _check_admin(await _require_admin(request, db))
+    if redirect:
+        return redirect
+
+    row = await db.scalar(
+        select(TrustedPartner).where(TrustedPartner.id == partner_id)
+    )
+    if row is None:
+        return await _render_partners_page(
+            request, db, admin, error="Trusted partner not found",
+        )
+    ips_norm, ip_err = await _normalise_ips(allowed_ips)
+    if ip_err:
+        return await _render_partners_page(request, db, admin, error=ip_err)
+    row.allowed_paths = _normalise_paths(allowed_paths)
+    row.allowed_ips = ips_norm
+    row.enabled = bool(enabled)
+    row.notes = notes.strip() or None
+    await db.commit()
+    return RedirectResponse(url="/_auth/admin/partners", status_code=302)
+
+
+@router.post("/partners/inbound/{partner_id}/rotate")
+async def rotate_inbound_partner(
+    partner_id: int, request: Request, db: AsyncSession = Depends(get_db),
+):
+    admin, redirect = _check_admin(await _require_admin(request, db))
+    if redirect:
+        return redirect
+
+    row = await db.scalar(
+        select(TrustedPartner).where(TrustedPartner.id == partner_id)
+    )
+    if row is None:
+        return await _render_partners_page(
+            request, db, admin, error="Trusted partner not found",
+        )
+    import secrets
+    new_key = secrets.token_urlsafe(32)
+    row.api_key_hash = _hash_partner_key(new_key)
+    await db.commit()
+    return await _render_partners_page(
+        request, db, admin,
+        issued_inbound_key=new_key, issued_inbound_name=row.name,
+    )
+
+
+@router.post("/partners/inbound/{partner_id}/delete")
+async def delete_inbound_partner(
+    partner_id: int, request: Request, db: AsyncSession = Depends(get_db),
+):
+    admin, redirect = _check_admin(await _require_admin(request, db))
+    if redirect:
+        return redirect
+
+    await db.execute(
+        delete(TrustedPartner).where(TrustedPartner.id == partner_id)
+    )
+    await db.commit()
+    return RedirectResponse(url="/_auth/admin/partners", status_code=302)
