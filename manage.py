@@ -25,8 +25,11 @@ _DEPLOY_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "deploy")
 
 
 ENV_HOSTS = {
-    "prod":    "scout.callendina.com",
-    "staging": "staging.callendina.com",
+    # gatekeeper-specific hostnames — currently CNAME to the same VMs as
+    # scout but decouple gk's deploy target from scout's so the two can
+    # split onto separate VMs later without renaming this file.
+    "prod":    "gatekeeper.callendina.com",
+    "staging": "gatekeeper-staging.callendina.com",
 }
 SSH_USER = "jonnosan"
 REPO_DIR = "/home/jonnosan/gatekeeper"
@@ -177,6 +180,41 @@ def cmd_set_secret(env: str, key: str) -> None:
     print(f"  {key} written to {SSH_USER}@{host}:{DATA_DIR}/.env")
 
 
+def cmd_generate_secret(env: str, key: str, bytes_n: int = 32) -> None:
+    """Generate a random hex value (token_hex(bytes_n)) and write it to
+    /srv/gatekeeper/data/.env on the host. The value is never echoed
+    to the local terminal — bypasses the human-paste step that risks
+    terminal escape codes contaminating the value.
+    """
+    import secrets as _secrets_lib
+    host = _host(env)
+    value = _secrets_lib.token_hex(bytes_n)
+    secrets.set_secret(host, key, value, app_slug="gatekeeper", user=SSH_USER)
+    print(f"  {key} ({bytes_n*2}-char hex) written to {SSH_USER}@{host}:{DATA_DIR}/.env")
+
+
+def cmd_copy_secret(src: str, dst: str, key: str) -> None:
+    """Copy a single named secret from src env's .env to dst env's .env.
+    Per-key by design — callers must name each secret to copy so we
+    never silently propagate a new staging key into prod."""
+    src_host = _host(src)
+    dst_host = _host(dst)
+    if src_host == dst_host:
+        print("source and destination are the same host — aborted", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"# Copying {key} from {src} → {dst}")
+    ok = secrets.copy_secret(
+        src_host, dst_host, key,
+        app_slug="gatekeeper", src_user=SSH_USER, dst_user=SSH_USER,
+    )
+    if ok:
+        print(f"  {key} written to {SSH_USER}@{dst_host}:{DATA_DIR}/.env")
+    else:
+        print(f"  {key} not present on {src} — nothing written", file=sys.stderr)
+        sys.exit(2)
+
+
 # ─── status / logs ────────────────────────────────────────────────────────────
 
 def cmd_status(env: str) -> None:
@@ -210,6 +248,23 @@ def main() -> None:
     p.add_argument("env", choices=list(ENV_HOSTS), help="Target environment")
     p.add_argument("key", metavar="KEY", help="Environment variable name")
 
+    p = sub.add_parser(
+        "generate-secret",
+        help="Generate a random hex value and write it to .env (no paste step)"
+    )
+    p.add_argument("env", choices=list(ENV_HOSTS), help="Target environment")
+    p.add_argument("key", metavar="KEY", help="Environment variable name")
+    p.add_argument("--bytes", type=int, default=32, dest="bytes_n",
+                   help="Random bytes (default 32 → 64-char hex)")
+
+    p = sub.add_parser(
+        "copy-secret",
+        help="Copy a single named secret from one env's .env to another's"
+    )
+    p.add_argument("src", choices=list(ENV_HOSTS), help="Source environment")
+    p.add_argument("dst", choices=list(ENV_HOSTS), help="Destination environment")
+    p.add_argument("key", metavar="KEY", help="Environment variable name to copy")
+
     p = sub.add_parser("status", help="docker compose ps")
     p.add_argument("--env", default="prod", choices=list(ENV_HOSTS))
 
@@ -226,6 +281,10 @@ def main() -> None:
         cmd_deploy(args.env)
     elif args.cmd == "set-secret":
         cmd_set_secret(args.env, args.key)
+    elif args.cmd == "generate-secret":
+        cmd_generate_secret(args.env, args.key, args.bytes_n)
+    elif args.cmd == "copy-secret":
+        cmd_copy_secret(args.src, args.dst, args.key)
     elif args.cmd == "status":
         cmd_status(args.env)
     elif args.cmd == "logs":
