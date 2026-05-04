@@ -46,7 +46,7 @@ async def whatsapp_webhook(
     background_tasks: BackgroundTasks,
 ):
     """Receive an inbound WhatsApp message from Twilio."""
-    host = request.headers.get("host", "").split(":")[0]
+    host = (request.headers.get("x-forwarded-host") or request.headers.get("host", "")).split(":")[0]
     app_cfg = _config.app_for_domain(host)
     if app_cfg is None or app_cfg.whatsapp is None:
         # No WhatsApp config for this domain — accept silently.
@@ -55,7 +55,11 @@ async def whatsapp_webhook(
     # Signature verification
     if _config.sms.twilio_auth_token:
         sig = request.headers.get("x-twilio-signature", "")
-        url = str(request.url)
+        # Reconstruct the public URL Twilio signed — use forwarded proto/host
+        # so it matches what Twilio sees, not the internal http://localhost URL.
+        proto = request.headers.get("x-forwarded-proto", "https")
+        fwd_host = request.headers.get("x-forwarded-host") or request.headers.get("host", "")
+        url = f"{proto}://{fwd_host}{request.url.path}"
         form = await request.form()
         params = {k: v for k, v in form.items()}
         if not verify_twilio_signature(_config.sms.twilio_auth_token, sig, url, params):
