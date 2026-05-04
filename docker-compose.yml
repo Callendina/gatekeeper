@@ -30,6 +30,8 @@ services:
         required: false   # missing on first boot before set-secret runs
     volumes:
       - /srv/gatekeeper/data:/app/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     # Route container stdout into journald so the host-side Alloy (in
     # the cyclops stack) ingests it alongside the bare-metal services.
     logging:
