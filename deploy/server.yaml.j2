@@ -39,8 +39,13 @@ oauth:
     client_id: "520026728140-lmfd0cpiv21j8789vn4dr4t7h2e72169.apps.googleusercontent.com"
     client_secret: "${GOOGLE_CLIENT_SECRET}"
   github:
-    client_id: "Ov23linFwKnvJSOX8Z6B"
-    client_secret: "${GITHUB_CLIENT_SECRET}"
+    # GitHub OAuth temporarily disabled — the GitHub OAuth app's
+    # redirect_uri is misconfigured for the new gatekeeper.callendina.com
+    # callback domain. Setting client_id to empty hides the "Sign in
+    # with GitHub" button across all apps. Re-enable by restoring the
+    # client_id once the GitHub OAuth app's callback URL is updated.
+    client_id: ""
+    client_secret: ""
 {% if env == "staging" %}
     callback_domain: "gatekeeper-staging.callendina.com"
 {% else %}
