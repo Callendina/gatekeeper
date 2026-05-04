@@ -83,7 +83,7 @@ class APIAccessConfig:
 
     @property
     def enabled(self) -> bool:
-        return self.mode == "key_required" and len(self.paths) > 0
+        return self.mode == "key_required" and bool(self.paths)
 
 
 @dataclass
@@ -321,11 +321,14 @@ def _parse_app_config(slug: str, app_raw: dict) -> AppConfig:
         nag_after_sessions=paywall_raw.get("nag_after_sessions", 0),
         nag_html_file=paywall_raw.get("nag_html_file", ""),
     )
-    api_raw = app_raw.get("api_access", {})
+    api_raw = app_raw.get("api_access") or {}
     api_access = APIAccessConfig(
         mode=api_raw.get("mode", "open"),
-        paths=api_raw.get("paths", []),
-        exempt_paths=api_raw.get("exempt_paths", []),
+        # `or []` so an explicit `paths:` (null) in YAML doesn't become
+        # None and crash APIAccessConfig.enabled / forward_auth's
+        # _path_matches_any.
+        paths=api_raw.get("paths") or [],
+        exempt_paths=api_raw.get("exempt_paths") or [],
         path_weights=api_raw.get("path_weights", {}),
         temp_key_duration_minutes=api_raw.get("temp_key_duration_minutes", 30),
         temp_key_duration_minutes_anonymous=api_raw.get("temp_key_duration_minutes_anonymous", 0),
