@@ -501,161 +501,141 @@ async def test_full_enrol_and_step_up_via_http(client, db):
     assert r7.headers.get("x-gatekeeper-user") == "endtoend@x.com"
 
 
-# ---- ClickSend provider ----------------------------------------------------
+# ---- Twilio provider --------------------------------------------------------
 
-def _make_clicksend_provider(handler):
-    """Build a ClickSendProvider with a MockTransport-backed httpx client."""
+def _make_twilio_provider(handler):
+    """Build a TwilioProvider with a MockTransport-backed httpx client."""
     import httpx
-    from gatekeeper.sms.providers import ClickSendProvider
+    from gatekeeper.sms.providers import TwilioProvider
     transport = httpx.MockTransport(handler)
     client = httpx.AsyncClient(transport=transport)
-    return ClickSendProvider(
-        username="u", api_key="k", sender_id="Gatekeeper",
+    return TwilioProvider(
+        account_sid="ACtest", auth_token="tok", from_number="+61200000001",
         test_mode=False, client=client,
     )
 
 
 @pytest.mark.asyncio
-async def test_clicksend_send_success_maps_cost_and_message_id(app, db):
+async def test_twilio_send_success_maps_cost_and_message_id(app, db):
     import httpx
 
     def handler(request: httpx.Request) -> httpx.Response:
-        # Sanity: outgoing payload structure
-        body = request.read()
-        assert b'"to":"+61412345678"' in body
-        assert b'"custom_string":"cid-1"' in body
+        assert "To=%2B61412345678" in request.content.decode()
         assert request.headers.get("authorization", "").startswith("Basic ")
-        return httpx.Response(200, json={
-            "data": {"messages": [{
-                "message_id": "ABC123",
-                "status": "SUCCESS",
-                "message_price": "0.0734",
-                "to": "+61412345678",
-            }]},
+        return httpx.Response(201, json={
+            "sid": "SM123",
+            "status": "queued",
+            "price": "-0.0734",
+            "price_unit": "USD",
         })
 
-    p = _make_clicksend_provider(handler)
+    p = _make_twilio_provider(handler)
     result = await p.send(
         to_e164="+61412345678", body="hi 123456",
         idempotency_key="cid-1", db=db,
     )
     assert result.accepted is True
-    assert result.provider_message_id == "ABC123"
-    assert result.cost_cents == 7  # round(0.0734 * 100)
+    assert result.provider_message_id == "SM123"
+    assert result.cost_cents == 7   # round(0.0734 * 100)
+    assert result.cost_currency == "USD"
     assert result.error_category is None
 
 
 @pytest.mark.asyncio
-async def test_clicksend_invalid_recipient_maps_to_invalid_number(app, db):
+async def test_twilio_invalid_number_maps_to_invalid_number(app, db):
     import httpx
 
     def handler(request):
-        return httpx.Response(200, json={
-            "data": {"messages": [{
-                "status": "INVALID_RECIPIENT",
-                "message_price": "0",
-            }]},
+        return httpx.Response(400, json={
+            "code": 21211,
+            "message": "The 'To' number is not a valid phone number.",
+            "status": 400,
         })
-    p = _make_clicksend_provider(handler)
+    p = _make_twilio_provider(handler)
     result = await p.send(to_e164="+61999", body="x", idempotency_key="c", db=db)
     assert result.accepted is False
     assert result.error_category == "invalid_number"
 
 
 @pytest.mark.asyncio
-async def test_clicksend_insufficient_credit(app, db):
+async def test_twilio_http_429_maps_to_provider_rate_limit(app, db):
     import httpx
 
     def handler(request):
-        return httpx.Response(200, json={
-            "data": {"messages": [{"status": "INSUFFICIENT_CREDIT"}]},
-        })
-    p = _make_clicksend_provider(handler)
-    result = await p.send(to_e164="+61412345678", body="x", idempotency_key="c", db=db)
-    assert result.accepted is False
-    assert result.error_category == "insufficient_credit"
-
-
-@pytest.mark.asyncio
-async def test_clicksend_http_429_maps_to_provider_rate_limit(app, db):
-    import httpx
-
-    def handler(request):
-        return httpx.Response(429, json={"messages": "Too many"})
-    p = _make_clicksend_provider(handler)
+        return httpx.Response(429, json={"code": 20429, "message": "Too Many Requests"})
+    p = _make_twilio_provider(handler)
     result = await p.send(to_e164="+61412345678", body="x", idempotency_key="c", db=db)
     assert result.accepted is False
     assert result.error_category == "provider_rate_limit"
 
 
 @pytest.mark.asyncio
-async def test_clicksend_unknown_status_falls_back_to_transient(app, db):
+async def test_twilio_unknown_status_falls_back_to_transient(app, db):
     import httpx
 
     def handler(request):
-        return httpx.Response(200, json={
-            "data": {"messages": [{"status": "WTF_NEW_STATUS_2030"}]},
-        })
-    p = _make_clicksend_provider(handler)
+        return httpx.Response(200, json={"status": "some_new_status_2030"})
+    p = _make_twilio_provider(handler)
     result = await p.send(to_e164="+61412345678", body="x", idempotency_key="c", db=db)
     assert result.accepted is False
     assert result.error_category == "transient_unknown"
 
 
 @pytest.mark.asyncio
-async def test_clicksend_test_mode_adds_is_test_flag(app, db):
+async def test_twilio_whatsapp_from_override_prefixes_to(app, db):
+    """When from_override starts with 'whatsapp:', To gets the same prefix."""
     import httpx
-    from gatekeeper.sms.providers import ClickSendProvider
 
     captured = {}
     def handler(request):
-        captured["body"] = request.read()
-        return httpx.Response(200, json={
-            "data": {"messages": [{"message_id": "X", "status": "SUCCESS"}]},
-        })
+        captured["body"] = request.content.decode()
+        return httpx.Response(201, json={"sid": "SM-WA", "status": "queued"})
 
-    transport = httpx.MockTransport(handler)
-    client = httpx.AsyncClient(transport=transport)
-    p = ClickSendProvider(
-        username="u", api_key="k", sender_id="Gatekeeper",
-        test_mode=True, client=client,
+    p = _make_twilio_provider(handler)
+    await p.send(
+        to_e164="+61412345678", body="hello",
+        idempotency_key="c", db=db,
+        from_override="whatsapp:+61200000001",
     )
-    await p.send(to_e164="+61412345678", body="x", idempotency_key="c", db=db)
-    assert b'"is_test":1' in captured["body"]
+    assert "To=whatsapp%3A%2B61412345678" in captured["body"]
+    assert "From=whatsapp%3A%2B61200000001" in captured["body"]
 
 
-def test_get_provider_returns_clicksend_when_configured():
+def test_get_provider_returns_twilio_when_configured():
     from gatekeeper.config import SMSConfig
     from gatekeeper.sms.providers import (
-        ClickSendProvider, get_provider, reset_singleton_for_tests,
+        TwilioProvider, get_provider, reset_singleton_for_tests,
     )
     reset_singleton_for_tests()
     cfg = SMSConfig(
-        provider="clicksend",
-        clicksend_username="u", clicksend_api_key="k",
-        sender_id="Gatekeeper",
+        provider="twilio",
+        twilio_account_sid="ACtest",
+        twilio_auth_token="tok",
+        twilio_from="+61200000001",
     )
     p = get_provider(cfg)
-    assert isinstance(p, ClickSendProvider)
+    assert isinstance(p, TwilioProvider)
     reset_singleton_for_tests()
 
 
 def test_get_provider_rebuilds_on_config_change():
     from gatekeeper.config import SMSConfig
     from gatekeeper.sms.providers import (
-        FakeSmsProvider, ClickSendProvider, get_provider,
+        FakeSmsProvider, TwilioProvider, get_provider,
         reset_singleton_for_tests,
     )
     reset_singleton_for_tests()
     fake_cfg = SMSConfig(provider="fake")
-    cs_cfg = SMSConfig(
-        provider="clicksend",
-        clicksend_username="u", clicksend_api_key="k",
+    twilio_cfg = SMSConfig(
+        provider="twilio",
+        twilio_account_sid="ACtest",
+        twilio_auth_token="tok",
+        twilio_from="+61200000001",
     )
     a = get_provider(fake_cfg)
-    b = get_provider(cs_cfg)
+    b = get_provider(twilio_cfg)
     assert isinstance(a, FakeSmsProvider)
-    assert isinstance(b, ClickSendProvider)
+    assert isinstance(b, TwilioProvider)
     assert a is not b
     reset_singleton_for_tests()
 
@@ -687,7 +667,7 @@ async def test_webhook_silent_ok_on_unknown_message_id(client, config):
     config.sms.webhook_secret = "s"
     resp = await client.post(
         "/_auth/sms/webhook/s",
-        json={"message_id": "no-such-id", "status": "Delivered"},
+        json={"MessageSid": "no-such-id", "MessageStatus": "delivered"},
     )
     assert resp.status_code == 200  # silent accept; no info-leak
 
@@ -706,7 +686,7 @@ async def test_webhook_marks_delivered(client, db, config):
 
     resp = await client.post(
         "/_auth/sms/webhook/s",
-        json={"message_id": "MID-DELIVERED", "status": "Delivered"},
+        json={"MessageSid": "MID-DELIVERED", "MessageStatus": "delivered"},
     )
     assert resp.status_code == 200
     from gatekeeper.database import async_session_factory
@@ -731,7 +711,7 @@ async def test_webhook_invalidates_pending_on_undeliverable(client, db, config):
 
     resp = await client.post(
         "/_auth/sms/webhook/s",
-        json={"message_id": "MID-DEAD", "status": "Undeliverable"},
+        json={"MessageSid": "MID-DEAD", "MessageStatus": "undelivered"},
     )
     assert resp.status_code == 200
     from gatekeeper.database import async_session_factory
@@ -757,7 +737,7 @@ async def test_webhook_idempotent_on_replay(client, db, config):
     for _ in range(3):
         resp = await client.post(
             "/_auth/sms/webhook/s",
-            json={"message_id": "MID-DUP", "status": "Delivered"},
+            json={"MessageSid": "MID-DUP", "MessageStatus": "delivered"},
         )
         assert resp.status_code == 200
     # delivered_at set once; status untouched.

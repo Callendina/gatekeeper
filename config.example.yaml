@@ -31,13 +31,15 @@ database:
 # Required for SMS OTP MFA. Defaults to the fake provider (writes codes
 # to a debug table + stdout) so dev/CI doesn't need real credentials.
 # sms:
-#   provider: "fake"                  # "fake" | "clicksend"
-#   test_mode: false                  # only for clicksend: ClickSend short-circuits delivery without billing
+#   provider: "fake"                  # "fake" | "twilio"
+#   test_mode: false                  # use Twilio test credentials (magic numbers only, no billing)
 #   country_allowlist: ["+61"]        # E.164 prefix list — never broaden to "all"
-#   sender_id: "Gatekeeper"           # ≤11 alphanumeric chars, ≥1 letter
-#   clicksend_username: ""
-#   clicksend_api_key: ""
-#   webhook_secret: ""                # long random — embedded in webhook URL path
+#   twilio_account_sid: ""            # or reference env vars: ${TWILIO_ACCOUNT_SID}
+#   twilio_auth_token: ""             # ${TWILIO_AUTH_TOKEN}
+#   twilio_from: ""                   # E.164 sender number, e.g. "+61412345678"
+#   twilio_test_account_sid: ""       # optional; Twilio test credentials
+#   twilio_test_auth_token: ""
+#   webhook_secret: ""                # long random — embedded in Twilio webhook URL path
 #   rate_limits:                      # five-tier sliding-window limits
 #     per_number_hour: 5
 #     per_number_day: 20

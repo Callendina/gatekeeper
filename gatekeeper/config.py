@@ -1,3 +1,5 @@
+import os
+import re
 import yaml
 from pathlib import Path
 from dataclasses import dataclass, field
@@ -190,20 +192,20 @@ class SMSRateLimits:
 @dataclass
 class SMSConfig:
     """Server-level SMS configuration."""
-    provider: str = "fake"            # "fake" | "clicksend"
-    # When True, ClickSend send calls include `is_test=true` so the
-    # provider returns a synthetic SUCCESS without actually sending or
-    # billing. Used for CI / manual verification.
+    provider: str = "fake"            # "fake" | "twilio"
+    # When True, use Twilio test credentials (test_account_sid / test_auth_token)
+    # which only accept Twilio's magic test numbers and never bill or deliver.
     test_mode: bool = False
     # Country allowlist for destination numbers (E.164 prefix match).
     # Default ["+61"] — Australia only at MVP. Never broaden to "all".
     country_allowlist: list[str] = field(default_factory=lambda: ["+61"])
-    sender_id: str = ""               # Alpha sender, ≤11 chars, ≥1 letter.
-    clicksend_username: str = ""
-    clicksend_api_key: str = ""
-    # Path secret embedded in the webhook URL: ClickSend doesn't sign
-    # delivery receipts itself, so we lock the endpoint behind a long
-    # random secret in the URL path
+    twilio_account_sid: str = ""
+    twilio_auth_token: str = ""
+    twilio_from: str = ""              # E.164 sender number, e.g. "+61412345678"
+    twilio_test_account_sid: str = ""  # Twilio test credentials (optional)
+    twilio_test_auth_token: str = ""
+    # Path secret embedded in the webhook URL — Twilio will also sign with
+    # X-Twilio-Signature, but the URL secret is an additional layer.
     # (e.g. /_auth/sms/webhook/<webhook_secret>). Generate with:
     #   python -c "import secrets; print(secrets.token_urlsafe(32))"
     webhook_secret: str = ""
@@ -211,7 +213,20 @@ class SMSConfig:
 
     @property
     def enabled(self) -> bool:
-        return self.provider in ("fake", "clicksend")
+        return self.provider in ("fake", "twilio")
+
+
+@dataclass
+class WhatsAppConfig:
+    """Per-app WhatsApp chat integration via Twilio WABA.
+
+    Uses the same Twilio account/credentials as SMSConfig (configured at
+    server level). Only the WhatsApp-specific sender and target endpoint
+    are per-app.
+    """
+    whatsapp_from: str = ""        # "whatsapp:+61xxxxxxxxx" — Twilio WABA number
+    chat_endpoint: str = ""        # e.g. "http://127.0.0.1:9002/api/chat"
+    default_comp: str | None = None  # passed as default_comp in chat body
 
 
 @dataclass
@@ -231,6 +246,7 @@ class AppConfig:
     allowed_emails: list[str] = field(default_factory=list)  # empty = anyone can sign in
     roles: list[str] = field(default_factory=lambda: ["user", "admin"])
     default_role: str = "user"
+    whatsapp: WhatsAppConfig | None = None
 
 
 @dataclass
@@ -352,6 +368,14 @@ def _parse_app_config(slug: str, app_raw: dict) -> AppConfig:
         step_up_minutes=mfa_raw.get("step_up_minutes", 0),
         step_up_days=mfa_raw.get("step_up_days", 0),
     )
+    wa_raw = app_raw.get("whatsapp") or {}
+    whatsapp = None
+    if wa_raw:
+        whatsapp = WhatsAppConfig(
+            whatsapp_from=wa_raw.get("whatsapp_from", ""),
+            chat_endpoint=wa_raw.get("chat_endpoint", ""),
+            default_comp=wa_raw.get("default_comp"),
+        )
     return AppConfig(
         slug=slug,
         name=app_raw.get("name", slug),
@@ -368,7 +392,17 @@ def _parse_app_config(slug: str, app_raw: dict) -> AppConfig:
         admin_api_key=app_raw.get("admin_api_key", ""),
         allowed_emails=app_raw.get("allowed_emails", []),
         default_role=app_raw.get("default_role", "user"),
+        whatsapp=whatsapp,
     )
+
+
+def _interpolate_env(text: str) -> str:
+    """Replace ${VAR} references with values from os.environ.
+
+    Allows YAML config files to reference secrets via environment variables
+    without embedding them literally. Unknown variables expand to "".
+    """
+    return re.sub(r"\$\{([^}]+)\}", lambda m: os.environ.get(m.group(1), ""), text)
 
 
 def load_config(path: str = "config.yaml") -> GatekeeperConfig:
@@ -377,7 +411,7 @@ def load_config(path: str = "config.yaml") -> GatekeeperConfig:
         raise FileNotFoundError(f"Config file not found: {path}")
 
     with open(config_path) as f:
-        raw = yaml.safe_load(f)
+        raw = yaml.safe_load(_interpolate_env(f.read()))
 
     server = raw.get("server", {})
     if "system_admin_requires_totp" in server:
@@ -408,7 +442,7 @@ def load_config(path: str = "config.yaml") -> GatekeeperConfig:
         for fragment_path in sorted(config_d.glob("*.yaml")):
             slug = fragment_path.stem
             with open(fragment_path) as f:
-                app_raw = yaml.safe_load(f)
+                app_raw = yaml.safe_load(_interpolate_env(f.read()))
             if app_raw and isinstance(app_raw, dict):
                 apps[slug] = _parse_app_config(slug, app_raw)
                 logger.info(f"Loaded app config fragment: {fragment_path.name} (slug: {slug})")
@@ -426,9 +460,11 @@ def load_config(path: str = "config.yaml") -> GatekeeperConfig:
         provider=sms_raw.get("provider", "fake"),
         test_mode=sms_raw.get("test_mode", False),
         country_allowlist=sms_raw.get("country_allowlist", ["+61"]) or ["+61"],
-        sender_id=sms_raw.get("sender_id", ""),
-        clicksend_username=sms_raw.get("clicksend_username", ""),
-        clicksend_api_key=sms_raw.get("clicksend_api_key", ""),
+        twilio_account_sid=sms_raw.get("twilio_account_sid", ""),
+        twilio_auth_token=sms_raw.get("twilio_auth_token", ""),
+        twilio_from=sms_raw.get("twilio_from", ""),
+        twilio_test_account_sid=sms_raw.get("twilio_test_account_sid", ""),
+        twilio_test_auth_token=sms_raw.get("twilio_test_auth_token", ""),
         webhook_secret=sms_raw.get("webhook_secret", ""),
         rate_limits=SMSRateLimits(
             per_number_hour=sms_rl_raw.get("per_number_hour", 5),

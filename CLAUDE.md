@@ -346,9 +346,12 @@ top-level `sms:` in `config.yaml`.
 
 ```yaml
 sms:
-  provider: "fake"             # "fake" (dev/test) | "clicksend" (phase 3)
+  provider: "fake"             # "fake" (dev/test) | "twilio"
   country_allowlist: ["+61"]   # E.164 prefixes — AU only at MVP
-  sender_id: "Gatekeeper"      # ≤11 alphanumeric chars, ≥1 letter
+  twilio_account_sid: "${TWILIO_ACCOUNT_SID}"   # env-var refs expanded at load
+  twilio_auth_token: "${TWILIO_AUTH_TOKEN}"
+  twilio_from: "+61412345678"                   # Twilio sender number
+  webhook_secret: ""                            # random token embedded in webhook URL
   rate_limits:                 # five-tier sliding-window limits
     per_number_hour: 5
     per_number_day: 20
@@ -409,46 +412,62 @@ Two providers ship today:
 
 - `FakeSmsProvider` (`sms.provider: "fake"`): writes plaintext sends to
   the `debug_sms_outbox` table and stdout. Default in dev / CI.
-- `ClickSendProvider` (`sms.provider: "clicksend"`): real provider.
-  Honours `sms.test_mode: true` to short-circuit at ClickSend's end
-  (no charge, no real delivery) for staging smoke tests.
+- `TwilioProvider` (`sms.provider: "twilio"`): Twilio REST API. Handles
+  both plain SMS (`From=+61...`) and WhatsApp (`From=whatsapp:+61...`)
+  via the same endpoint — caller passes `from_override` for WhatsApp.
+  Honours `sms.test_mode: true` to use Twilio's separate test credentials
+  (magic numbers only, no billing).
 
-Startup logs a loud warning when `clicksend` is selected with
+Startup logs a loud warning when `twilio` is selected with
 `test_mode: false`, so a misconfigured non-prod env is hard to miss.
 
-#### ClickSend setup
+Config values may reference environment variables as `${VAR}` — they are
+substituted before YAML parsing. This lets `config.d/` fragments include
+secrets from `.env` without embedding them literally.
 
-1. Create a ClickSend account, generate an API key, decide on a sender
-   ID (≤11 alphanumeric chars, ≥1 letter — ClickSend rules).
-2. Generate a long random webhook secret:
+#### Twilio setup
+
+1. Create a Twilio account, buy a number, register it for SMS. For
+   WhatsApp, register the same number in Twilio's WABA (WhatsApp Business
+   API console).
+2. Generate a webhook secret:
    `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
-3. Add to `config.yaml`:
+3. Set secrets on the host (values piped via SSH stdin, never on
+   command line):
+   ```
+   python manage.py set-secret gk-prod TWILIO_ACCOUNT_SID
+   python manage.py set-secret gk-prod TWILIO_AUTH_TOKEN
+   python manage.py set-secret gk-prod TWILIO_FROM
+   python manage.py set-secret gk-prod SMS_WEBHOOK_SECRET
+   ```
+4. Add to `config.yaml` (or a `config.d/` fragment):
    ```yaml
    sms:
-     provider: "clicksend"
+     provider: "twilio"
      test_mode: true              # flip to false only when ready for live sends
      country_allowlist: ["+61"]
-     sender_id: "Gatekeeper"
-     clicksend_username: "you@example.com"
-     clicksend_api_key: "the-api-key"
-     webhook_secret: "<random-token>"
+     twilio_account_sid: "${TWILIO_ACCOUNT_SID}"
+     twilio_auth_token: "${TWILIO_AUTH_TOKEN}"
+     twilio_from: "${TWILIO_FROM}"
+     webhook_secret: "${SMS_WEBHOOK_SECRET}"
    ```
-4. In ClickSend's dashboard, set the SMS *delivery receipts* webhook URL to
-   `https://gatekeeper.example.com/_auth/sms/webhook/<webhook_secret>`
-   with content type JSON. Webhook is path-secret-locked because
-   ClickSend doesn't sign delivery receipts natively.
+5. In Twilio's console, set the SMS *status callback URL* to
+   `https://gatekeeper.example.com/_auth/sms/webhook/<webhook_secret>`.
+   Twilio signs with `X-Twilio-Signature` (HMAC-SHA1); when
+   `twilio_auth_token` is set the handler verifies that header.
 
 ### Delivery webhook
 
-`POST /_auth/sms/webhook/{secret}` accepts ClickSend delivery receipts
-(JSON or form-encoded). Idempotent — replays are no-ops.
+`POST /_auth/sms/webhook/{secret}` accepts Twilio status callbacks
+(form-encoded or JSON). Idempotent — replays are no-ops.
 
-- `status: Delivered` → set `delivered_at` on the matching challenge.
-- `status: Undeliverable / Failed / Cancelled / Rejected / Expired` →
-  if the challenge is still pending, flip it to `invalidated` so the
-  next user action gets a fresh code instead of timing out.
-- Unknown `message_id` → silent 200 (no info-leak about which IDs we
-  know about).
+Auth: URL path secret (constant-time) + `X-Twilio-Signature` HMAC when
+`twilio_auth_token` is configured.
+
+- `MessageStatus: delivered` → set `delivered_at` on the matching challenge.
+- `MessageStatus: failed / undelivered` → if challenge is still pending,
+  flip it to `invalidated` so the next user action gets a fresh code.
+- Unknown `MessageSid` → silent 200 (no info-leak).
 
 ### Threat model (apps that opt in inherit this)
 

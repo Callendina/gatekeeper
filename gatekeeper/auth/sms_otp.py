@@ -13,11 +13,14 @@ Three flows live here:
     POST /_auth/sms-otp/resend            — invalidate in-flight, issue fresh
 
   Provider delivery webhook:
-    POST /_auth/sms/webhook/{secret}      — ClickSend delivery receipt
+    POST /_auth/sms/webhook/{secret}      — Twilio delivery status callback
 
 The forward_auth gate redirects users here based on `UserAppRole.mfa_method`.
 This module never decides whether the user *should* be doing SMS OTP — it
 just lets them. Same posture as `auth/totp.py`.
+
+Webhook auth: URL path secret (constant-time compare) + optional
+X-Twilio-Signature HMAC-SHA1 when twilio_auth_token is configured.
 """
 import datetime
 import logging
@@ -744,13 +747,10 @@ async def _handle_verify_result(
 
 # ---- delivery webhook -------------------------------------------------------
 
-# ClickSend status values that mean "no point retrying — show the user
-# a fresh-code prompt." We invalidate the challenge so the next user
-# action gets a new code rather than wasting attempts on a dead one.
-_TERMINAL_FAILURE_STATUSES = {
-    "UNDELIVERABLE", "FAILED", "REJECTED", "CANCELLED", "EXPIRED",
-}
-_DELIVERED_STATUSES = {"DELIVERED", "SENT"}
+# Twilio MessageStatus values → challenge actions.
+# Twilio terminal failures (no point keeping challenge pending):
+_TERMINAL_FAILURE_STATUSES = {"failed", "undelivered"}
+_DELIVERED_STATUSES = {"delivered"}
 
 
 @router.post("/_auth/sms/webhook/{secret}")
@@ -759,28 +759,39 @@ async def sms_webhook(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
-    """ClickSend delivery receipt sink. The path component `secret`
-    must match `sms.webhook_secret` — ClickSend doesn't sign these
-    natively, so we lock the endpoint behind a long random URL.
+    """Twilio delivery status callback. The path component `secret`
+    must match `sms.webhook_secret` (configured as the webhook URL in
+    Twilio's console). Twilio also signs with X-Twilio-Signature; when
+    twilio_auth_token is set we verify that header as a second layer.
 
-    Idempotent: webhooks may be retried by ClickSend on transient
-    receipt failures, and an event for an already-finalised challenge
-    is a no-op.
+    Idempotent: webhooks may be retried by Twilio on transient receipt
+    failures, and an event for an already-finalised challenge is a no-op.
     """
     if not _config.sms.webhook_secret:
-        # Misconfiguration — refuse rather than accept anonymous posts.
         return HTMLResponse("Webhook not configured", status_code=503)
-    # Constant-time compare to keep the path secret out of timing oracles.
     import hmac as _hmac
     if not _hmac.compare_digest(secret, _config.sms.webhook_secret):
-        # Don't echo anything that helps an attacker probe.
         return HTMLResponse("Not found", status_code=404)
 
-    payload = await _parse_webhook_body(request)
-    message_id = payload.get("message_id") or payload.get("messageId") or ""
-    status_str = (payload.get("status") or payload.get("status_text") or "").upper()
+    # Twilio signature verification — only when auth_token is configured.
+    if _config.sms.twilio_auth_token:
+        from gatekeeper.sms.providers import verify_twilio_signature
+        sig = request.headers.get("x-twilio-signature", "")
+        # Reconstruct the URL Twilio signed (must match what's in their console).
+        url = str(request.url)
+        form = await request.form()
+        params = {k: v for k, v in form.items()}
+        if not verify_twilio_signature(_config.sms.twilio_auth_token, sig, url, params):
+            return HTMLResponse("Not found", status_code=404)
+        payload = params
+    else:
+        payload = await _parse_webhook_body(request)
+
+    # Twilio sends MessageSid + MessageStatus (form-encoded).
+    message_id = payload.get("MessageSid") or payload.get("message_id") or ""
+    status_str = (payload.get("MessageStatus") or payload.get("status") or "").lower()
     if not message_id:
-        return HTMLResponse("Missing message_id", status_code=400)
+        return HTMLResponse("Missing MessageSid", status_code=400)
 
     challenge = await db.scalar(
         select(SmsOtpChallenge).where(
@@ -788,8 +799,6 @@ async def sms_webhook(
         )
     )
     if challenge is None:
-        # Unknown / pre-cleanup / spoofed — accept silently to avoid
-        # giving the sender a confirmed-or-not signal.
         return HTMLResponse("OK", status_code=200)
 
     if status_str in _DELIVERED_STATUSES and challenge.delivered_at is None:
@@ -818,15 +827,14 @@ async def sms_webhook(
         await db.commit()
         await _record_event(
             db, ip="webhook", app_slug=challenge.app_slug,
-            user_email=None, status=f"sms_otp_undeliverable:{status_str.lower()}",
+            user_email=None, status=f"sms_otp_undeliverable:{status_str}",
             session_token=challenge.gk_session_token, request=request,
         )
     return HTMLResponse("OK", status_code=200)
 
 
 async def _parse_webhook_body(request: Request) -> dict:
-    """Accept JSON or form-encoded — ClickSend's delivery receipt config
-    lets either be picked, and we don't want the choice to break parity."""
+    """Accept JSON or form-encoded for testing convenience."""
     ctype = (request.headers.get("content-type") or "").lower()
     if "application/json" in ctype:
         try:

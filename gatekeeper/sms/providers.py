@@ -3,15 +3,20 @@
 Two concrete providers ship today:
   - FakeSmsProvider: writes plaintext to debug_sms_outbox + stdout.
     Selected when sms.provider == "fake". Used in dev/CI.
-  - ClickSendProvider: real provider, with optional `is_test` mode that
-    short-circuits delivery without billing. Selected when
-    sms.provider == "clicksend".
+  - TwilioProvider: real provider. Selected when sms.provider == "twilio".
+    Handles both plain SMS (From=+61...) and WhatsApp (From=whatsapp:+61...)
+    via the same API endpoint — caller passes from_override for WhatsApp.
+    test_mode=True uses Twilio's separate test credentials (separate SID/token
+    from the console) which only accept Twilio's magic test numbers and never
+    bill or deliver.
 
-The interface intentionally keeps `send` returning enough metadata
-(provider message id, cost, error category) that the caller can record
-the lot in the challenge row without re-querying the provider.
+The interface keeps `send` returning enough metadata (provider message id,
+cost, error category) that the caller can record it in the challenge row
+without re-querying the provider.
 """
 import base64
+import hashlib
+import hmac
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -44,6 +49,7 @@ class SendResult:
     accepted: bool
     provider_message_id: str | None
     cost_cents: int | None        # provider charge in cents, if known
+    cost_currency: str | None     # ISO 4217 (e.g. "USD"); None if unknown
     error_category: ErrorCategory | None
     raw_response: str | None      # opaque blob, useful for debugging
     error_message: str | None = None
@@ -70,9 +76,17 @@ class SmsProvider(ABC):
         body: str,
         idempotency_key: str,
         db: AsyncSession,
+        from_override: str | None = None,
     ) -> SendResult:
-        """Send a single SMS. `idempotency_key` is the challenge id —
-        callers ensure each challenge maps to at most one outbound send."""
+        """Send a single SMS or WhatsApp message.
+
+        `idempotency_key` is the challenge id — callers ensure each challenge
+        maps to at most one outbound send.
+
+        `from_override` replaces the provider's configured sender. Used by the
+        WhatsApp path to pass "whatsapp:+61xxxxxxxxx" instead of the plain
+        SMS sender number.
+        """
 
     @abstractmethod
     async def lookup_status(
@@ -90,7 +104,7 @@ class FakeSmsProvider(SmsProvider):
 
     The "code" stored in DebugSmsOutbox is parsed back out of the body —
     callers don't pass it separately because the abstraction must work
-    for ClickSend too. We pull it out of the body via a small heuristic
+    for TwilioProvider too. We pull it out of the body via a small heuristic
     (first 6-digit run) only for the dev/test convenience field; tests
     that want to be precise should generate the body themselves and grep
     for known markers.
@@ -109,6 +123,7 @@ class FakeSmsProvider(SmsProvider):
         body: str,
         idempotency_key: str,
         db: AsyncSession,
+        from_override: str | None = None,
     ) -> SendResult:
         self._counter += 1
         message_id = f"fake-{idempotency_key}-{self._counter}"
@@ -125,19 +140,19 @@ class FakeSmsProvider(SmsProvider):
         # opening the DB. We deliberately log the *plaintext* code here
         # only because this provider is the dev/test fake.
         self._logger.warning(
-            "FakeSmsProvider send → to=%s code=%s id=%s",
-            to_e164, code, message_id,
+            "FakeSmsProvider send → to=%s from_override=%s code=%s id=%s",
+            to_e164, from_override, code, message_id,
         )
         return SendResult(
             accepted=True,
             provider_message_id=message_id,
             cost_cents=0,
+            cost_currency=None,
             error_category=None,
             raw_response="fake-accepted",
         )
 
     async def lookup_status(self, provider_message_id: str) -> DeliveryStatus:
-        # Fake provider never reports failure.
         return DeliveryStatus(state="delivered")
 
 
@@ -155,175 +170,237 @@ def _extract_code(body: str) -> str:
     return ""
 
 
-# --- ClickSend ---------------------------------------------------------------
+# --- Twilio ------------------------------------------------------------------
 
-# Mapping of ClickSend per-message status strings to our error taxonomy.
-# Anything not in this map → TransientUnknown so an unrecognised failure
+# Map Twilio numeric error codes to our error taxonomy.
+# Full catalogue: https://www.twilio.com/docs/api/errors
+# Anything not in this map → transient_unknown so an unrecognised failure
 # doesn't get silently treated as success.
-_CLICKSEND_STATUS_MAP: dict[str, ErrorCategory | None] = {
-    "SUCCESS": None,
-    "QUEUED": None,
-    "INVALID_RECIPIENT": "invalid_number",
-    "INVALID_PHONE_NUMBER_LENGTH": "invalid_number",
-    "INVALID_RECIPIENT_FORMAT": "invalid_number",
-    "INSUFFICIENT_CREDIT": "insufficient_credit",
-    "MISSING_BALANCE": "insufficient_credit",
-    "RATE_LIMIT_EXCEEDED": "provider_rate_limit",
-    "THROTTLED": "provider_rate_limit",
+_TWILIO_ERROR_CODE_MAP: dict[int, ErrorCategory] = {
+    20003: "transient_unknown",    # auth failed — config error, not caller fault
+    21211: "invalid_number",       # invalid 'To' number
+    21212: "invalid_number",       # invalid 'To' number (alternate)
+    21214: "invalid_number",       # 'To' number cannot receive SMS
+    21610: "invalid_number",       # unsubscribed recipient (opted out)
+    21614: "invalid_number",       # 'To' number is not a mobile number
+    21408: "country_not_allowed",  # permission to send to this region not enabled
+    21421: "country_not_allowed",  # phone number is not allowed
+    30007: "country_not_allowed",  # carrier filtering / violation
+    30006: "invalid_number",       # landline or unreachable carrier
+    21617: "insufficient_credit",  # message body exceeds limit (edge case)
+    20429: "provider_rate_limit",  # Twilio account rate limited
+    14107: "provider_rate_limit",  # too many requests
 }
 
+# Twilio message status values that indicate the message was accepted.
+_TWILIO_ACCEPTED_STATUSES = {"queued", "accepted", "sending", "sent", "delivered"}
+_TWILIO_FAILED_STATUSES = {"failed", "undelivered"}
 
-class ClickSendProvider(SmsProvider):
-    """ClickSend REST v3 SMS adapter.
+
+class TwilioProvider(SmsProvider):
+    """Twilio REST API SMS (and WhatsApp) adapter.
 
     Network calls go through an injectable `httpx.AsyncClient` so tests
     can mock the wire without involving the real API. In production the
     client is constructed once at provider-instantiation time and reused
     across requests (httpx connection pooling).
 
-    `test_mode` makes ClickSend short-circuit at their end — the call
-    returns SUCCESS with a synthetic message_id but no SMS is sent and
-    no charge is incurred. We rely on this for staging smoke tests and
-    keep `test_mode: false` for prod.
+    `test_mode=True` authenticates with separate Twilio test credentials
+    (test_account_sid / test_auth_token from the Twilio console). Test
+    credentials only accept Twilio's magic test numbers (e.g. +15005550006
+    for success) and never bill or deliver. Country allowlist should be
+    bypassed by callers when test_mode=True since magic numbers use +1.
+
+    WhatsApp: pass `from_override="whatsapp:+61xxxxxxxxx"` on send(). The
+    To address is automatically prefixed with "whatsapp:" by the caller or
+    this method. Twilio's API uses the same endpoint for both SMS and
+    WhatsApp — only the From/To format differs.
     """
 
-    name = "clicksend"
-
-    SEND_URL = "https://rest.clicksend.com/v3/sms/send"
+    name = "twilio"
 
     def __init__(
         self,
         *,
-        username: str,
-        api_key: str,
-        sender_id: str,
+        account_sid: str,
+        auth_token: str,
+        from_number: str,
         test_mode: bool = False,
+        test_account_sid: str = "",
+        test_auth_token: str = "",
         client: httpx.AsyncClient | None = None,
     ):
-        if not username or not api_key:
+        if not account_sid or not auth_token:
             raise ValueError(
-                "ClickSendProvider requires sms.clicksend_username and "
-                "sms.clicksend_api_key"
+                "TwilioProvider requires sms.twilio_account_sid and "
+                "sms.twilio_auth_token"
             )
-        self._username = username
-        self._api_key = api_key
-        self._sender_id = sender_id
         self._test_mode = test_mode
+        if test_mode:
+            sid = test_account_sid or account_sid
+            token = test_auth_token or auth_token
+        else:
+            sid = account_sid
+            token = auth_token
+        self._account_sid = sid
+        self._auth_token = token
+        self._from_number = from_number
+        self._send_url = (
+            f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json"
+        )
         self._client = client or httpx.AsyncClient(timeout=30.0)
-        self._logger = logging.getLogger("gatekeeper.sms.clicksend")
-        creds = base64.b64encode(f"{username}:{api_key}".encode()).decode()
+        self._logger = logging.getLogger("gatekeeper.sms.twilio")
+        creds = base64.b64encode(f"{sid}:{token}".encode()).decode()
         self._auth_header = f"Basic {creds}"
 
     async def send(
-        self, *, to_e164: str, body: str, idempotency_key: str,
+        self,
+        *,
+        to_e164: str,
+        body: str,
+        idempotency_key: str,
         db: AsyncSession,
+        from_override: str | None = None,
     ) -> SendResult:
-        message: dict[str, object] = {
-            "source": "gatekeeper",
-            "body": body,
-            "to": to_e164,
-            "custom_string": idempotency_key,
+        sender = from_override or self._from_number
+        # WhatsApp To addresses require the "whatsapp:" prefix.
+        to = f"whatsapp:{to_e164}" if sender.startswith("whatsapp:") else to_e164
+        data = {
+            "To": to,
+            "From": sender,
+            "Body": body,
         }
-        if self._sender_id:
-            message["from"] = self._sender_id
-        if self._test_mode:
-            # ClickSend accepts is_test on each message; setting it here
-            # makes the call non-billing and non-delivering.
-            message["is_test"] = 1
-
-        payload = {"messages": [message]}
         try:
             response = await self._client.post(
-                self.SEND_URL,
-                headers={
-                    "Authorization": self._auth_header,
-                    "Content-Type": "application/json",
-                },
-                json=payload,
+                self._send_url,
+                headers={"Authorization": self._auth_header},
+                data=data,  # form-encoded, not JSON
             )
         except httpx.HTTPError as exc:
-            self._logger.warning("ClickSend transport error: %r", exc)
+            self._logger.warning("Twilio transport error: %r", exc)
             return SendResult(
                 accepted=False,
                 provider_message_id=None,
                 cost_cents=None,
+                cost_currency=None,
                 error_category="transient_unknown",
                 raw_response=None,
                 error_message=str(exc),
             )
 
-        return self._parse_response(response, idempotency_key)
+        return self._parse_response(response)
 
-    def _parse_response(
-        self, response: httpx.Response, idempotency_key: str,
-    ) -> SendResult:
-        # ClickSend returns 200 even for some per-message failures; rely
-        # on the per-message `status` field, not the HTTP status, for the
-        # accepted/rejected decision.
+    def _parse_response(self, response: httpx.Response) -> SendResult:
         try:
             data = response.json()
         except ValueError:
             return SendResult(
-                accepted=False, provider_message_id=None, cost_cents=None,
+                accepted=False, provider_message_id=None,
+                cost_cents=None, cost_currency=None,
                 error_category="transient_unknown",
                 raw_response=response.text[:500],
-                error_message=f"ClickSend non-JSON response (HTTP {response.status_code})",
+                error_message=f"Twilio non-JSON response (HTTP {response.status_code})",
             )
 
-        if response.status_code == 401 or response.status_code == 403:
-            return SendResult(
-                accepted=False, provider_message_id=None, cost_cents=None,
-                error_category="transient_unknown",
-                raw_response=str(data)[:500],
-                error_message="ClickSend authentication failed — check clicksend_username/api_key",
-            )
         if response.status_code == 429:
             return SendResult(
-                accepted=False, provider_message_id=None, cost_cents=None,
+                accepted=False, provider_message_id=None,
+                cost_cents=None, cost_currency=None,
                 error_category="provider_rate_limit",
                 raw_response=str(data)[:500],
-                error_message="ClickSend HTTP rate limit",
+                error_message="Twilio HTTP rate limit",
             )
 
-        messages = data.get("data", {}).get("messages") or []
-        # We send one message per request, so the response list has one entry.
-        msg = messages[0] if messages else {}
-        status_str = (msg.get("status") or "").upper()
-        category = _CLICKSEND_STATUS_MAP.get(status_str, "transient_unknown")
-        message_id = msg.get("message_id") or None
-        # message_price comes back as a decimal string in dollars (e.g.
-        # "0.0734"). Convert to integer cents for stable accounting.
+        # HTTP 400 responses have a top-level `code` field; message-level
+        # errors (even on HTTP 200) use `error_code`. Check both.
+        error_code = data.get("error_code") or data.get("code")
+        if error_code is not None:
+            category = _TWILIO_ERROR_CODE_MAP.get(int(error_code), "transient_unknown")
+            return SendResult(
+                accepted=False,
+                provider_message_id=data.get("sid"),
+                cost_cents=None, cost_currency=None,
+                error_category=category,
+                raw_response=str(data)[:500],
+                error_message=f"Twilio error {error_code}: {data.get('message', '')}",
+            )
+
+        # `status` may be an integer on error responses — cast to str.
+        status = str(data.get("status") or "").lower()
+        message_id = data.get("sid") or None
+
+        # Twilio returns price as a negative string (e.g. "-0.0400") in price_unit.
         cost_cents = None
-        price = msg.get("message_price")
+        cost_currency = None
+        price = data.get("price")
         if price is not None:
             try:
-                cost_cents = int(round(float(price) * 100))
+                cost_cents = int(round(-float(price) * 100))
+                cost_currency = data.get("price_unit")
             except (TypeError, ValueError):
-                cost_cents = None
+                pass
 
-        if category is None:
+        if status in _TWILIO_ACCEPTED_STATUSES:
             return SendResult(
-                accepted=True, provider_message_id=message_id,
-                cost_cents=cost_cents, error_category=None,
+                accepted=True,
+                provider_message_id=message_id,
+                cost_cents=cost_cents,
+                cost_currency=cost_currency,
+                error_category=None,
                 raw_response=str(data)[:500],
             )
 
         return SendResult(
-            accepted=False, provider_message_id=message_id,
-            cost_cents=cost_cents, error_category=category,
+            accepted=False,
+            provider_message_id=message_id,
+            cost_cents=cost_cents,
+            cost_currency=cost_currency,
+            error_category="transient_unknown",
             raw_response=str(data)[:500],
-            error_message=f"ClickSend status: {status_str}",
+            error_message=f"Twilio status: {status}",
         )
 
     async def lookup_status(self, provider_message_id: str) -> DeliveryStatus:
-        # GET /v3/sms/history/{id} returns the latest delivery state.
-        # Full implementation isn't needed for phase 3 — webhook carries
-        # the same data and is the primary path. Stub kept here so
-        # SmsProvider's interface stays consistent.
-        return DeliveryStatus(state="unknown")
+        url = (
+            f"https://api.twilio.com/2010-04-01/Accounts/"
+            f"{self._account_sid}/Messages/{provider_message_id}.json"
+        )
+        try:
+            response = await self._client.get(
+                url, headers={"Authorization": self._auth_header}
+            )
+            data = response.json()
+        except Exception:
+            return DeliveryStatus(state="unknown")
+        status = (data.get("status") or "").lower()
+        if status == "delivered":
+            return DeliveryStatus(state="delivered")
+        if status in _TWILIO_FAILED_STATUSES:
+            error_code = data.get("error_code")
+            category = (
+                _TWILIO_ERROR_CODE_MAP.get(int(error_code), "transient_unknown")
+                if error_code else "transient_unknown"
+            )
+            return DeliveryStatus(state="failed", error_category=category)
+        return DeliveryStatus(state="pending")
 
 
-# --- factory ----------------------------------------------------------------
+def verify_twilio_signature(
+    auth_token: str, signature: str, url: str, params: dict[str, str]
+) -> bool:
+    """Verify an X-Twilio-Signature header.
+
+    Algorithm: HMAC-SHA1(auth_token, url + sorted(k+v for k,v in params))
+    encoded as base64. See https://www.twilio.com/docs/usage/webhooks/webhooks-security
+    """
+    s = url + "".join(k + v for k, v in sorted(params.items()))
+    expected = base64.b64encode(
+        hmac.new(auth_token.encode(), s.encode(), hashlib.sha1).digest()
+    ).decode()
+    return hmac.compare_digest(expected, signature)
+
+
+# --- factory -----------------------------------------------------------------
 
 _provider_singleton: SmsProvider | None = None
 _provider_signature: tuple | None = None
@@ -331,8 +408,8 @@ _provider_signature: tuple | None = None
 
 def _signature(cfg: SMSConfig) -> tuple:
     return (
-        cfg.provider, cfg.test_mode, cfg.clicksend_username,
-        cfg.clicksend_api_key, cfg.sender_id,
+        cfg.provider, cfg.test_mode,
+        cfg.twilio_account_sid, cfg.twilio_auth_token, cfg.twilio_from,
     )
 
 
@@ -346,16 +423,18 @@ def get_provider(cfg: SMSConfig) -> SmsProvider:
         return _provider_singleton
     if cfg.provider == "fake":
         _provider_singleton = FakeSmsProvider()
-    elif cfg.provider == "clicksend":
-        _provider_singleton = ClickSendProvider(
-            username=cfg.clicksend_username,
-            api_key=cfg.clicksend_api_key,
-            sender_id=cfg.sender_id,
+    elif cfg.provider == "twilio":
+        _provider_singleton = TwilioProvider(
+            account_sid=cfg.twilio_account_sid,
+            auth_token=cfg.twilio_auth_token,
+            from_number=cfg.twilio_from,
             test_mode=cfg.test_mode,
+            test_account_sid=cfg.twilio_test_account_sid,
+            test_auth_token=cfg.twilio_test_auth_token,
         )
     else:
         raise ValueError(
-            f"Unknown sms.provider: {cfg.provider!r}. Valid: 'fake', 'clicksend'."
+            f"Unknown sms.provider: {cfg.provider!r}. Valid: 'fake', 'twilio'."
         )
     _provider_signature = sig
     return _provider_singleton
@@ -378,13 +457,13 @@ def warn_if_real_provider_active(cfg: SMSConfig) -> None:
     """Loud-log when the real provider will be doing real sends. Called
     once at startup so operators can spot a misconfigured non-prod env."""
     logger = logging.getLogger("gatekeeper.sms")
-    if cfg.provider == "clicksend" and not cfg.test_mode:
+    if cfg.provider == "twilio" and not cfg.test_mode:
         logger.warning(
-            "*** SMS provider = clicksend, test_mode = False — "
-            "real SMS sends will be billed. Country allowlist: %s ***",
+            "*** SMS provider = twilio, test_mode = False — "
+            "real sends will be billed. Country allowlist: %s ***",
             cfg.country_allowlist,
         )
-    elif cfg.provider == "clicksend" and cfg.test_mode:
-        logger.info("SMS provider = clicksend (test_mode=True; no real sends)")
+    elif cfg.provider == "twilio" and cfg.test_mode:
+        logger.info("SMS provider = twilio (test_mode=True; using test credentials)")
     else:
         logger.info("SMS provider = %s", cfg.provider)
