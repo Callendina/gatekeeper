@@ -32,8 +32,11 @@ ENV_HOSTS = {
     "staging": "gatekeeper-staging.callendina.com",
 }
 SSH_USER = "jonnosan"
-REPO_DIR = "/home/jonnosan/gatekeeper"
+REPO_DIR = "/srv/gatekeeper"
 DATA_DIR = "/srv/gatekeeper/data"
+GITHUB_REPO = "git@github.com:Callendina/gatekeeper.git"
+GATEKEEPER_UID = 1102
+GATEKEEPER_GID = 1102
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -57,63 +60,39 @@ def _run(host: str, cmd: str) -> None:
 # ─── provision ────────────────────────────────────────────────────────────────
 
 def cmd_provision(env: str) -> None:
-    """Idempotent host setup. Safe to re-run."""
+    """Idempotent host setup per CONVENTIONS §1+§2. Safe to re-run."""
     host = _host(env)
+    # Standard host setup: docker, gatekeeper user (UID 1102), /srv/gatekeeper/{,data}
+    wf.provision_host(host, app="gatekeeper", uid=GATEKEEPER_UID, gid=GATEKEEPER_GID, user=SSH_USER)
+
+    # Gatekeeper-specific: bring repo content into /srv/gatekeeper/
+    # (operator must have a deploy key for Callendina/gatekeeper on the
+    # host). Use git init+fetch+checkout (not `clone .`) because
+    # provision_host pre-creates /srv/gatekeeper/data/, so the dir is
+    # non-empty when this runs.
     script = textwrap.dedent(f"""\
         set -e
-
-        echo '=== 1. Docker install (idempotent) ==='
-        if ! command -v docker >/dev/null 2>&1; then
-            sudo bash -c '
-                set -e
-                apt-get update
-                apt-get install -y ca-certificates curl gnupg
-                install -m 0755 -d /etc/apt/keyrings
-                . /etc/os-release
-                curl -fsSL "https://download.docker.com/linux/${{ID}}/gpg" | \\
-                    gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-                chmod a+r /etc/apt/keyrings/docker.gpg
-                echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \\
-                    https://download.docker.com/linux/${{ID}} \\
-                    $(. /etc/os-release && echo $VERSION_CODENAME) stable" \\
-                    > /etc/apt/sources.list.d/docker.list
-                apt-get update
-                apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-            '
-        else
-            echo "  docker present: $(docker --version)"
-        fi
-
-        echo '=== 2. Add {SSH_USER} to docker group (idempotent) ==='
-        if ! groups {SSH_USER} | grep -qw docker; then
-            sudo usermod -aG docker {SSH_USER}
-            echo "  added to docker group — re-login required for effect"
-        else
-            echo "  {SSH_USER} already in docker group"
-        fi
-
-        echo '=== 3. Clone repo (idempotent) ==='
+        echo '=== Initialise gatekeeper repo (idempotent) ==='
         if [ ! -d {REPO_DIR}/.git ]; then
-            git clone https://github.com/Callendina/gatekeeper.git {REPO_DIR}
+            cd {REPO_DIR}
+            git init -b main
+            git remote add origin {GITHUB_REPO}
+            git fetch origin main
+            git checkout -B main origin/main
+            echo "  repo initialised at {REPO_DIR}"
         else
-            echo "  repo already cloned at {REPO_DIR}"
+            echo "  gatekeeper repo already initialised at {REPO_DIR}"
         fi
-
-        echo '=== 4. /srv/gatekeeper/data (idempotent) ==='
-        sudo bash -c '
-            mkdir -p {DATA_DIR}
-            chown {SSH_USER}:{SSH_USER} {DATA_DIR}
-            chmod 750 {DATA_DIR}
-        '
-
         echo '=== Provision complete ==='
         echo
         echo 'Next steps:'
         echo '  1. Set secrets (example):'
-        echo '       python manage.py set-secret {env} SECRET_KEY'
+        echo '       python manage.py set-secret {env} GK_SECRET_KEY'
+        echo '       python manage.py set-secret {env} GOOGLE_CLIENT_SECRET'
+        echo '       python manage.py set-secret {env} GITHUB_CLIENT_SECRET'
+        echo '       python manage.py set-secret {env} RESEND_API_KEY'
         echo '       python manage.py set-secret {env} TWILIO_ACCOUNT_SID'
         echo '       python manage.py set-secret {env} TWILIO_AUTH_TOKEN'
-        echo '       python manage.py set-secret {env} TWILIO_WEBHOOK_SECRET'
         echo '  2. python manage.py deploy --env={env}'
     """)
     _run(host, script)
