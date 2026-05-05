@@ -18,8 +18,8 @@ import sys
 import textwrap
 
 from jinja2 import Environment, FileSystemLoader
-from skeletor import ssh, secrets
-from skeletor.ssh import SSHError
+from skeletor import RemoteError, secrets
+from skeletor import workflow as wf
 
 _DEPLOY_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "deploy")
 
@@ -49,8 +49,8 @@ def _run(host: str, cmd: str) -> None:
     """SSH to host, run cmd, stream output to terminal. Exits on failure."""
     print(f"# {SSH_USER}@{host}: {cmd[:120]}{'...' if len(cmd) > 120 else ''}", flush=True)
     try:
-        ssh.run(host, cmd, user=SSH_USER, capture=False)
-    except SSHError as e:
+        wf.run_remote_script(host, cmd, user=SSH_USER)
+    except RemoteError as e:
         sys.exit(e.result.returncode)
 
 
@@ -126,12 +126,15 @@ def _deploy_server_config(host: str, env: str) -> None:
     j2 = Environment(loader=FileSystemLoader(_DEPLOY_DIR), keep_trailing_newline=True)
     rendered = j2.get_template("server.yaml.j2").render(env=env)
     print(f"# Deploying server config → {DATA_DIR}/config.yaml", flush=True)
-    cmd = (
-        f"sudo tee {DATA_DIR}/config.yaml > /dev/null"
-        f" && sudo chown gatekeeper:gatekeeper {DATA_DIR}/config.yaml"
-        f" && sudo chmod 0640 {DATA_DIR}/config.yaml"
+    wf.deploy_file(
+        host,
+        content=rendered,
+        dest_path=f"{DATA_DIR}/config.yaml",
+        owner="gatekeeper",
+        group="gatekeeper",
+        mode="0640",
+        user=SSH_USER,
     )
-    ssh.run(host, cmd, user=SSH_USER, stdin=rendered)
 
 
 def cmd_deploy(env: str) -> None:
