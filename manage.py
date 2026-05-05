@@ -65,24 +65,11 @@ def cmd_provision(env: str) -> None:
     # Standard host setup: docker, gatekeeper user (UID 1102), /srv/gatekeeper/{,data}
     wf.provision_host(host, app="gatekeeper", uid=GATEKEEPER_UID, gid=GATEKEEPER_GID, user=SSH_USER)
 
-    # Gatekeeper-specific: bring repo content into /srv/gatekeeper/
-    # (operator must have a deploy key for Callendina/gatekeeper on the
-    # host). Use git init+fetch+checkout (not `clone .`) because
-    # provision_host pre-creates /srv/gatekeeper/data/, so the dir is
-    # non-empty when this runs.
-    script = textwrap.dedent(f"""\
-        set -e
-        echo '=== Initialise gatekeeper repo (idempotent) ==='
-        if [ ! -d {REPO_DIR}/.git ]; then
-            cd {REPO_DIR}
-            git init -b main
-            git remote add origin {GITHUB_REPO}
-            git fetch origin main
-            git checkout -B main origin/main
-            echo "  repo initialised at {REPO_DIR}"
-        else
-            echo "  gatekeeper repo already initialised at {REPO_DIR}"
-        fi
+    # Bring repo content into /srv/gatekeeper/. Operator must have a
+    # deploy key for Callendina/gatekeeper on the host.
+    wf.git_clone_or_pull(host, dest=REPO_DIR, repo_url=GITHUB_REPO, user=SSH_USER)
+
+    _run(host, textwrap.dedent(f"""\
         echo '=== Provision complete ==='
         echo
         echo 'Next steps:'
@@ -94,8 +81,7 @@ def cmd_provision(env: str) -> None:
         echo '       python manage.py set-secret {env} TWILIO_ACCOUNT_SID'
         echo '       python manage.py set-secret {env} TWILIO_AUTH_TOKEN'
         echo '  2. python manage.py deploy --env={env}'
-    """)
-    _run(host, script)
+    """))
 
 
 # ─── deploy ───────────────────────────────────────────────────────────────────
