@@ -31,7 +31,7 @@ ENV_HOSTS = {
     "prod":    "gatekeeper.callendina.com",
     "staging": "gatekeeper-staging.callendina.com",
 }
-SSH_USER = "jonnosan"
+SSH_USER = "skeletor"
 REPO_DIR = "/srv/gatekeeper"
 DATA_DIR = "/srv/gatekeeper/data"
 GITHUB_REPO = "git@github.com:Callendina/gatekeeper.git"

@@ -72,9 +72,9 @@ apps:
       nag_after_sessions: 5
       max_sessions_per_week: 10
       # Optional: custom nag page HTML (omit to use gatekeeper's default)
-      # nag_html_file: "/home/jonnosan/myapp/nag.html"
+      # nag_html_file: "/srv/myapp/nag.html"
     # Optional: custom login page HTML
-    # login_html_file: "/home/jonnosan/myapp/login.html"
+    # login_html_file: "/srv/myapp/login.html"
     # Optional: restrict sign-in to specific emails (empty = anyone)
     # allowed_emails:
     #   - "alice@example.com"

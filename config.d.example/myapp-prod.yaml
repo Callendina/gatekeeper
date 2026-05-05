@@ -10,8 +10,8 @@ protected_paths:
 paywall:
   nag_after_sessions: 5
   max_sessions_per_week: 10
-  # nag_html_file: "/home/jonnosan/myapp/nag.html"
-# login_html_file: "/home/jonnosan/myapp/login.html"
+  # nag_html_file: "/srv/myapp/nag.html"
+# login_html_file: "/srv/myapp/login.html"
 # admin_api_key: ""  # secret for /_auth/status/{slug}/keys endpoint
 # allowed_emails: []  # empty = anyone can sign in
 # magic_link:
